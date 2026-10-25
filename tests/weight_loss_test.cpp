@@ -1,4 +1,4 @@
-#include "weight_loss.hpp"
+#include "../src/weight_loss.hpp"
 
 #include <cassert>
 #include <cmath>

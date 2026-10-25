@@ -6,6 +6,8 @@ Experimental C++17 primitives for weight-only INT4 and 1-bit (BIN1) quantization
 
 ## What's included
 
+- `src/nanolm.cpp`: port of the standalone character-level Transformer from `vitrixLab/blank/ai/gpt.cpp` (source SHA `68f24e5541b9257e6c77e77f34fc852378a29da6`). The model source is preserved as a separate translation unit; quantized kernels are **not yet wired into its inference path**.
+
 - `src/weight_loss.hpp`: row-wise symmetric INT4 quantization/dequantization, INT4 × dynamically quantized INT8 matrix-vector multiply, binary sign packing, and XNOR/popcount-style BIN1 matrix-vector multiply.
 - `tests/weight_loss_test.cpp`: assertion-based smoke tests for INT4 packing/decoding, finite outputs, zero weights, a 35-column BIN1 tail mask, and rejection of infinite weights.
 
@@ -27,6 +29,10 @@ Expected success output: `weight_loss tests passed`.
 - The tests are smoke tests, not a complete correctness, fuzzing, sanitizer, or performance suite.
 - No model integration, training/backpropagation changes, checkpoint conversion, latency benchmark, memory profile, or output-quality evaluation is included.
 - Review large-dimension overflow and index-boundary behavior before production use.
+
+## Model integration status
+
+The nanoLM model source has been copied into this repository for integration work. This is a source port, not a completed quantized-runtime integration. Preserve the original FP32 path as the reference implementation. Candidate projection targets for a later inference-only adapter are Q/K/V, attention output, and MLP projections; keep normalization, softmax, residual additions, training, and checkpoint serialization unchanged until numerical parity is demonstrated.
 
 ## Next verification gates
 

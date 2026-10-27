@@ -1,0 +1,185 @@
+name: Binary and C++ Engineering CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+    branches: ["**"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: cpp-ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-and-test:
+    name: Build and test (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            compiler: gcc
+          - os: ubuntu-latest
+            compiler: clang
+          - os: macos-latest
+            compiler: clang
+          - os: windows-latest
+            compiler: msvc
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure MSVC
+        if: matrix.compiler == 'msvc'
+        uses: ilammy/msvc-dev-cmd@v1
+
+      - name: Configure CMake
+        shell: bash
+        run: |
+          if [[ "${{ matrix.compiler }}" == "clang" && "${{ runner.os }}" == "Linux" ]]; then
+            export CC=clang
+            export CXX=clang++
+          elif [[ "${{ matrix.compiler }}" == "gcc" ]]; then
+            export CC=gcc
+            export CXX=g++
+          fi
+          cmake -S binary-skill -B build -DCMAKE_BUILD_TYPE=Debug -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
+
+      - name: Build every C++ target with warnings enabled
+        shell: bash
+        run: |
+          if [[ "${{ runner.os }}" == "Windows" ]]; then
+            cmake --build build --config Debug --parallel
+          else
+            cmake --build build --parallel
+          fi
+
+      - name: Run compiler round-trip self-test
+        shell: bash
+        run: |
+          if [[ "${{ runner.os }}" == "Windows" ]]; then
+            ./build/Debug/binary_skill_cli.exe test-compile
+          else
+            ./build/binary_skill_cli test-compile
+          fi
+
+      - name: Verify tracked binary structure and whole-file digest
+        shell: bash
+        run: |
+          if [[ "${{ runner.os }}" == "Windows" ]]; then
+            ./build/Debug/binary_skill_cli.exe binary-skill/secondbrain.bin verify
+          else
+            ./build/binary_skill_cli binary-skill/secondbrain.bin verify
+          fi
+          python - <<'PY'
+          import hashlib, json
+          from pathlib import Path
+
+          binary = Path("binary-skill/secondbrain.bin")
+          report = json.loads(Path("binary-skill/benchmark_results.json").read_text())
+          data = binary.read_bytes()
+          actual = hashlib.sha256(data).hexdigest()
+          assert len(data) == report["file_size_bytes"], (
+              f"binary size mismatch: {len(data)} != {report['file_size_bytes']}"
+          )
+          assert actual == report["file_sha256"], (
+              f"binary SHA-256 mismatch: {actual} != {report['file_sha256']}"
+          )
+          assert report["skill_count"] > 0, "reported skill_count must be positive"
+          print(f"Binary integrity metadata PASS: bytes={len(data)}, sha256={actual}")
+          PY
+
+      - name: Run benchmark smoke test (not a performance gate)
+        shell: bash
+        run: |
+          mkdir -p ci-artifacts
+          cd ci-artifacts
+          if [[ "${{ runner.os }}" == "Windows" ]]; then
+            ../build/Debug/benchmark_runner.exe ../binary-skill/secondbrain.bin
+          else
+            ../build/benchmark_runner ../binary-skill/secondbrain.bin
+          fi
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          report = json.loads(Path("benchmark_results.json").read_text())
+          assert report.get("schema_version") == 1, "unexpected benchmark schema"
+          results = report.get("results")
+          assert isinstance(results, list) and results, "benchmark results are empty"
+          for item in results:
+              assert item["samples"] > 0, f"no samples for {item.get('operation')}"
+              assert 0 <= item["min_ns"] <= item["median_ns"] <= item["max_ns"], (
+                  f"invalid timing order for {item.get('operation')}"
+              )
+              assert item["matches"] >= 0, f"invalid result count for {item.get('operation')}"
+          print(f"Benchmark smoke test PASS: {len(results)} operations; timings are informational only.")
+          PY
+
+      - name: Upload benchmark and build evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ci-evidence-${{ runner.os }}-${{ matrix.compiler }}
+          path: |
+            ci-artifacts/benchmark_results.json
+            build/compile_commands.json
+          if-no-files-found: ignore
+          retention-days: 14
+
+  static-analysis:
+    name: C++ static analysis (Cppcheck)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Cppcheck
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes cppcheck
+
+      - name: Analyze all C++ source and headers
+        run: |
+          cppcheck --version
+          cppcheck --enable=warning,performance,portability \
+            --error-exitcode=1 \
+            --inline-suppr \
+            --suppress=missingIncludeSystem \
+            --language=c++ --std=c++17 \
+            binary-skill
+
+  linux-sanitizers:
+    name: Linux ASan + UBSan
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure sanitizer build
+        run: >-
+          cmake -S binary-skill -B build-sanitize
+          -DCMAKE_BUILD_TYPE=Debug
+          -DCMAKE_CXX_COMPILER=clang++
+          -DCMAKE_CXX_FLAGS="-fsanitize=address,undefined -fno-omit-frame-pointer -Wall -Wextra -Wpedantic"
+          -DCMAKE_EXE_LINKER_FLAGS="-fsanitize=address,undefined"
+
+      - name: Build all targets
+        run: cmake --build build-sanitize --parallel
+
+      - name: Run self-test under sanitizers
+        env:
+          ASAN_OPTIONS: detect_leaks=1:strict_string_checks=1
+          UBSAN_OPTIONS: print_stacktrace=1:halt_on_error=1
+        run: ./build-sanitize/binary_skill_cli test-compile
+
+      - name: Verify tracked binary under sanitizers
+        env:
+          ASAN_OPTIONS: detect_leaks=1:strict_string_checks=1
+          UBSAN_OPTIONS: print_stacktrace=1:halt_on_error=1
+        run: ./build-sanitize/binary_skill_cli binary-skill/secondbrain.bin verify

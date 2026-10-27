@@ -118,27 +118,39 @@ int main(int argc, char* argv[]) {
             std::ifstream src(test_bin, std::ios::binary);
             std::vector<char> buf((std::istreambuf_iterator<char>(src)), std::istreambuf_iterator<char>());
             src.close();
-            if (buf.size() > 100U) {
-                buf.back() ^= static_cast<char>(0xFF);
-                std::ofstream dst(tampered_bin, std::ios::binary);
-                dst.write(buf.data(), static_cast<std::streamsize>(buf.size()));
-                dst.close();
-
-                bnn::BinarySkillReader tamp_reader;
-                if (tamp_reader.open(tampered_bin, true)) {
-                    std::string t_err;
-                    if (tamp_reader.verify_record_digests(&t_err)) {
-                        std::cerr << "FAIL: Tampered payload was NOT detected by verify_record_digests!\n";
-                        tamp_reader.close();
-                        std::remove(tampered_bin.c_str());
-                        std::remove(test_bin.c_str());
-                        return 1;
-                    }
-                    tamp_reader.close();
-                }
-                std::remove(tampered_bin.c_str());
+            if (buf.size() <= 100U) {
+                std::cerr << "FAIL: Test fixture is too small for payload tampering\n";
+                std::remove(test_bin.c_str());
+                return 1;
             }
-            std::cout << "  [Adversarial] Tampered payload detection: PASS (digest mismatch caught)\n";
+
+            // Flip byte in payload area
+            buf.back() ^= static_cast<char>(0xFF);
+            std::ofstream dst(tampered_bin, std::ios::binary);
+            dst.write(buf.data(), static_cast<std::streamsize>(buf.size()));
+            dst.close();
+
+            bnn::BinarySkillReader tamp_reader;
+            // The tampered fixture MUST open successfully (valid structure)
+            if (!tamp_reader.open(tampered_bin, true)) {
+                std::cerr << "FAIL: Tampered fixture failed to open (must open successfully to prove digest detection)!\n";
+                std::remove(tampered_bin.c_str());
+                std::remove(test_bin.c_str());
+                return 1;
+            }
+
+            // Record-digest verification MUST fail specifically because payload was altered
+            std::string t_err;
+            if (tamp_reader.verify_record_digests(&t_err)) {
+                std::cerr << "FAIL: Tampered payload was NOT detected by verify_record_digests!\n";
+                tamp_reader.close();
+                std::remove(tampered_bin.c_str());
+                std::remove(test_bin.c_str());
+                return 1;
+            }
+            tamp_reader.close();
+            std::remove(tampered_bin.c_str());
+            std::cout << "  [Adversarial] Tampered payload detection: PASS (fixture opened successfully, digest mismatch detected: " << t_err << ")\n";
         }
 
         // 4b. Corrupted magic bytes rejected safely
@@ -333,21 +345,43 @@ int main(int argc, char* argv[]) {
     }
 
     if (command == "verify") {
-        std::cout << "Verifying binary structural integrity and cryptographic hashes...\n";
+        std::cout << "========================================================\n"
+                  << "  BNN Cryptographic & Structural Integrity Verification\n"
+                  << "========================================================\n";
+
+        // Phase 1: Structural layout & bounds validation
         std::string err;
         if (!reader.verify_all(&err)) {
             std::cerr << "FAIL: Structural verification error: " << err << "\n";
             return 1;
         }
+        std::cout << "  [1/4] Header & record table bounds: PASS\n";
+        std::cout << "  [2/4] String table checked arithmetic: PASS\n";
 
-        std::cout << "  [1/3] Header & record table bounds: PASS\n";
-        std::cout << "  [2/3] String table checked arithmetic: PASS\n";
+        // Phase 2: Per-record cryptographic digest verification (Finding 1)
+        if (!reader.verify_record_digests(&err)) {
+            std::cerr << "FAIL: Per-record SHA-256 digest mismatch: " << err << "\n";
+            return 1;
+        }
+        std::cout << "  [3/4] Per-record SHA-256 payload digests: PASS ("
+                  << reader.count() << "/" << reader.count() << " records verified)\n";
 
-        // Whole-file SHA-256
+        // Phase 3: Whole-file SHA-256 digest calculation & optional expected comparison
         std::string file_sha = reader.compute_file_sha256_hex();
-        std::cout << "  [3/3] Whole-file cryptographic hash: " << file_sha << " (PASS)\n";
+        std::cout << "  [4/4] Whole-file cryptographic digest: " << file_sha << "\n";
 
-        std::cout << "PASS: All " << reader.count() << " records structurally valid and memory-mappable.\n";
+        if (!arg.empty()) {
+            if (arg != file_sha) {
+                std::cerr << "FAIL: Expected SHA-256 '" << arg << "' does not match computed '" << file_sha << "'\n";
+                return 1;
+            }
+            std::cout << "        Expected hash comparison: MATCH (PASS)\n";
+        }
+
+        std::cout << "========================================================\n"
+                  << "PASS: All " << reader.count()
+                  << " records structurally valid and cryptographically verified.\n"
+                  << "========================================================\n";
         return 0;
     }
 

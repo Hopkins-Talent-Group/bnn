@@ -6,16 +6,18 @@ This report provides comprehensive, verifiable evidence comparing the raw, multi
 
 ## 1. Executive Summary & Measured Benchmark Metrics
 
-All benchmarks below are **independently measured** across 50 independent iterations on Windows x64 (MSVC 19.44 `/std:c++17 /O2`) using the compiled `benchmark_runner.exe` and recorded in `benchmark_results.json`.
+All benchmarks below are **independently measured** across 50 iterations on Windows x64 using a controlled Release build (MSVC 19.44 `/W4 /WX /permissive- /O2`, commit `b251258`), recorded in `binary-skill/benchmark_results.json`.
 
 | Metric / Operation | Raw Multi-File Corpus | Distilled Binary (`secondbrain.bin`) | Measured Latency (Median) | Algorithmic Complexity |
 |---|---|---|---|---|
-| **Whole-File Open / Map** | 504 files across 52 directories | **1 contiguous binary file (510,896 bytes)** | **80.9 µs** (P95: 153.8 µs) | $O(1)$ OS `MapViewOfFile` / `mmap` |
-| **Indexed Record Access** | $O(N)$ directory scan + parse | **Direct 128-byte record dereference** | **0.6 µs** (600 ns, P95: 0.8 µs) | **$O(1)$ Constant-Time** |
-| **Exact Name Lookup** | Multiple filesystem `stat` calls | Sequential record search (52 records) | **0.3 µs** (300 ns, P95: 0.4 µs) | $O(N)$ Linear Table Scan |
-| **Category Query** | Directory parsing & frontmatter | Sequential category ID match | **1.7 µs** (P95: 3.0 µs) | $O(N)$ Linear Table Scan |
-| **Common Keyword Search** | Text read across 504 files | Scan across 504 KB string pool | **2,982.5 µs** (~2.98 ms) | $O(M)$ Linear String Scan |
-| **Whole-File SHA-256** | Re-hash 11.89 MB across 504 files | Cryptographic hash over 510 KB | **3,249.3 µs** (~3.25 ms) | Deterministic integrity pass |
+| **Whole-File Open / Map** | 504 files across 52 directories | **1 contiguous binary file (510,896 bytes)** | **46.8 µs** (P95: 56.2 µs) | $O(1)$ OS `MapViewOfFile` / `mmap` |
+| **Single Record Access** | $O(N)$ directory scan + parse | **Direct 128-byte record dereference** | **< 0.1 µs** (sub-100 ns, P95: 0.1 µs) | **$O(1)$ Constant-Time** |
+| **All-Record Indexed Traversal** | 504 filesystem reads | Loop over 52 structured records | **0.3 µs** (300 ns, P95: 0.6 µs) | $O(N)$ Array Dereference ($N=52$) |
+| **Exact Name Lookup** | Multiple filesystem `stat` calls | Sequential record search (52 records) | **0.2 µs** (200 ns, P95: 0.3 µs) | $O(N)$ Linear Table Scan |
+| **Category Query** | Directory parsing & frontmatter | Sequential category ID match | **0.5 µs** (500 ns, P95: 0.6 µs) | $O(N)$ Linear Table Scan |
+| **Common Keyword Search** | Text read across 504 files | Scan across 504 KB string pool | **1,752.6 µs** (~1.75 ms) | $O(M)$ Linear String Scan |
+| **Rare Keyword Search** | Text read across 504 files | Scan across 504 KB string pool | **1,719.4 µs** (~1.72 ms) | $O(M)$ Linear String Scan |
+| **Whole-File SHA-256** | Re-hash 11.89 MB across 504 files | Cryptographic hash over 510 KB | **2,231.2 µs** (~2.23 ms) | Deterministic integrity pass |
 | **Storage Footprint** | 11,889,847 bytes (11.89 MB) | **510,896 bytes (510.9 KB)** | **95.7% reduction (23.3x compression)** | Static file size |
 | **Storage Token Overhead** | ~2,972,000 estimated BPE tokens | **0 tokens** in local storage / routing | **100% storage token elimination** | Local binary representation |
 

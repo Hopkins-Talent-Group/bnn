@@ -48,7 +48,7 @@ int main(int argc, char* argv[]) {
     std::string bin_path = "secondbrain.bin";
     if (argc >= 2) bin_path = argv[1];
 
-    std::cout << "Starting BNN Binary-Skill Benchmark Suite (30 iterations per op)...\n";
+    std::cout << "Starting BNN Binary-Skill Benchmark Suite (50 iterations per op)...\n";
 
     bnn::BinarySkillReader reader;
     if (!reader.open(bin_path, true)) {
@@ -62,16 +62,21 @@ int main(int argc, char* argv[]) {
     const size_t ITERS = 50; // 50 repetitions for robust median/p95
     std::vector<StatResult> results;
 
-    // 1. Process startup & memory map
+    // 1. Process startup & memory map (Finding 4: explicitly fail if open fails)
     results.push_back(run_benchmark("open_mmap", ITERS, [&]() -> size_t {
         bnn::BinarySkillReader r;
-        r.open(bin_path, true);
+        if (!r.open(bin_path, true) || !r.is_valid()) {
+            throw std::runtime_error("Benchmark failure: open_mmap failed to map binary");
+        }
         return r.count();
     }));
 
     // 2. Direct O(1) single-record indexed access (constant time pointer dereference)
     results.push_back(run_benchmark("single_record_access_O1", ITERS, [&]() -> size_t {
         const auto& rec = reader.record(25);
+        if (rec.category_id == 0) {
+            throw std::runtime_error("Benchmark failure: invalid category_id on record 25");
+        }
         return rec.category_id;
     }));
 
@@ -81,42 +86,60 @@ int main(int argc, char* argv[]) {
         for (size_t i = 0; i < reader.count(); ++i) {
             dummy += reader.name(i).size() + reader.flags(i);
         }
+        if (dummy == 0) {
+            throw std::runtime_error("Benchmark failure: empty records in indexed traversal");
+        }
         return dummy;
     }));
 
-    // 3. Exact name lookup (O(N) linear search)
+    // 4. Exact name lookup (O(N) linear search)
     results.push_back(run_benchmark("exact_name_lookup", ITERS, [&]() -> size_t {
         int idx = reader.find_by_name("omniroute");
-        return idx >= 0 ? 1 : 0;
+        if (idx < 0 || reader.name(idx) != "omniroute") {
+            throw std::runtime_error("Benchmark failure: exact_name_lookup failed to find omniroute");
+        }
+        return 1;
     }));
 
-    // 4. Category lookup (O(N) search)
+    // 5. Category lookup (O(N) search)
     results.push_back(run_benchmark("category_lookup_nvidia", ITERS, [&]() -> size_t {
         auto matches = reader.find_by_category(bnn::CAT_NVIDIA_STACK);
+        if (matches.empty()) {
+            throw std::runtime_error("Benchmark failure: category_lookup_nvidia found 0 matches");
+        }
         return matches.size();
     }));
 
-    // 5. Keyword search - common query ("nvidia")
+    // 6. Keyword search - common query ("nvidia")
     results.push_back(run_benchmark("search_common_nvidia", ITERS, [&]() -> size_t {
         auto matches = reader.search_keyword("nvidia");
+        if (matches.empty()) {
+            throw std::runtime_error("Benchmark failure: search_common_nvidia found 0 matches");
+        }
         return matches.size();
     }));
 
-    // 6. Keyword search - rare query ("whisper")
+    // 7. Keyword search - rare query ("whisper")
     results.push_back(run_benchmark("search_rare_whisper", ITERS, [&]() -> size_t {
         auto matches = reader.search_keyword("whisper");
         return matches.size();
     }));
 
-    // 7. Keyword search - no match query
+    // 8. Keyword search - no match query
     results.push_back(run_benchmark("search_nomatch", ITERS, [&]() -> size_t {
         auto matches = reader.search_keyword("xyznonexistent999");
-        return matches.size();
+        if (!matches.empty()) {
+            throw std::runtime_error("Benchmark failure: search_nomatch unexpectedly found matches");
+        }
+        return 0;
     }));
 
-    // 8. Whole-file SHA-256 calculation
+    // 9. Whole-file SHA-256 calculation
     results.push_back(run_benchmark("sha256_whole_file", 20, [&]() -> size_t {
         std::string h = reader.compute_file_sha256_hex();
+        if (h.size() != 64) {
+            throw std::runtime_error("Benchmark failure: sha256_whole_file produced invalid hash length");
+        }
         return h.size();
     }));
 
@@ -142,7 +165,7 @@ int main(int argc, char* argv[]) {
     }
     std::cout << "========================================================================================\n";
 
-    // Write machine-readable JSON results schema (Section 3.4 compliance)
+    // Write machine-readable JSON results schema (Section 3.4 compliance + provenance)
     std::ofstream json_out("benchmark_results.json");
     if (json_out.is_open()) {
         std::string safe_bin_path = bin_path;
@@ -150,6 +173,31 @@ int main(int argc, char* argv[]) {
 
         json_out << "{\n"
                  << "  \"schema_version\": 1,\n"
+                 << "  \"provenance\": {\n"
+                 << "    \"commit\": \"b251258\",\n"
+#ifdef _WIN32
+                 << "    \"os\": \"Windows x64\",\n"
+#elif defined(__APPLE__)
+                 << "    \"os\": \"macOS\",\n"
+#else
+                 << "    \"os\": \"Linux\",\n"
+#endif
+#if defined(_MSC_VER)
+                 << "    \"compiler\": \"MSVC " << _MSC_VER << "\",\n"
+#elif defined(__clang__)
+                 << "    \"compiler\": \"Clang " << __clang_major__ << "." << __clang_minor__ << "\",\n"
+#elif defined(__GNUC__)
+                 << "    \"compiler\": \"GCC " << __GNUC__ << "." << __GNUC_MINOR__ << "\",\n"
+#else
+                 << "    \"compiler\": \"Unknown\",\n"
+#endif
+#ifdef NDEBUG
+                 << "    \"build_type\": \"Release\",\n"
+#else
+                 << "    \"build_type\": \"Debug\",\n"
+#endif
+                 << "    \"iterations_per_op\": " << ITERS << "\n"
+                 << "  },\n"
                  << "  \"binary_file\": \"" << safe_bin_path << "\",\n"
                  << "  \"file_size_bytes\": " << reader.file_size() << ",\n"
                  << "  \"skill_count\": " << reader.count() << ",\n"

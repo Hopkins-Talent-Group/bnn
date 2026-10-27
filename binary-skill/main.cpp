@@ -1,6 +1,7 @@
 #include <iostream>
 #include <string>
 #include <vector>
+#include <array>
 #include <chrono>
 #include "binary_skill.hpp"
 
@@ -41,18 +42,38 @@ int main(int argc, char* argv[]) {
 
     if (command == "test-compile") {
         std::cout << "Running pure C++ binary skill compiler self-test...\n";
-        bnn::BinarySkillCompiler compiler;
-        uint8_t dummy_sha[32];
-        std::memset(dummy_sha, 0x42, 32);
 
-        compiler.add_skill("bnn-quant", bnn::CAT_NVIDIA_STACK, 0x02,
-                           "Quantized INT4/BIN1 inference acceleration.",
-                           "# BNN Quantization\nRuns XNOR/popcount kernels without FPU floating-point conversion.",
-                           dummy_sha);
-        compiler.add_skill("bnn-memory", bnn::CAT_CORE_ENGINEERING, 0x04,
-                           "Zero-copy memory mapped state cache.",
-                           "# BNN Memory Cache\nDirect buffer reading bypassing tokenization layers.",
-                           dummy_sha);
+        // Gate 1: NIST FIPS 180-4 known-answer test (3 vectors)
+        if (!bnn::Sha256::self_test()) {
+            std::cerr << "FAIL: SHA-256 NIST known-answer self-test FAILED\n";
+            return 1;
+        }
+        std::cout << "  [SHA-256] NIST FIPS 180-4 known-answer vectors: PASS\n";
+
+        // Gate 2: compiler round-trip
+        bnn::BinarySkillCompiler compiler;
+
+        // Compute correct payload SHA-256 for each test skill so verify_record_digests() passes
+        auto make_sha = [](const char* desc, const char* body) {
+            uint8_t sha[32];
+            bnn::Sha256 h;
+            h.update(desc, std::strlen(desc));
+            h.update(body, std::strlen(body));
+            h.finalize(sha);
+            std::array<uint8_t, 32> arr;
+            std::memcpy(arr.data(), sha, 32);
+            return arr;
+        };
+
+        const char* d0 = "Quantized INT4/BIN1 inference acceleration.";
+        const char* b0 = "# BNN Quantization\nRuns XNOR/popcount kernels without FPU floating-point conversion.";
+        auto sha0 = make_sha(d0, b0);
+        compiler.add_skill("bnn-quant", bnn::CAT_NVIDIA_STACK, 0x02, d0, b0, sha0.data());
+
+        const char* d1 = "Zero-copy memory mapped state cache.";
+        const char* b1 = "# BNN Memory Cache\nDirect buffer reading bypassing tokenization layers.";
+        auto sha1 = make_sha(d1, b1);
+        compiler.add_skill("bnn-memory", bnn::CAT_CORE_ENGINEERING, 0x04, d1, b1, sha1.data());
 
         std::string test_bin = "test_roundtrip.bin";
         if (!compiler.compile_to_file(test_bin)) {
@@ -74,10 +95,106 @@ int main(int argc, char* argv[]) {
             return 1;
         }
 
+        // Gate 3: per-record digest verification (closes stored-vs-computed gap)
+        if (!test_reader.verify_record_digests(&err)) {
+            std::cerr << "FAIL: per-record SHA-256 digest verification failed: " << err << "\n";
+            std::remove(test_bin.c_str());
+            return 1;
+        }
+
         if (test_reader.count() != 2 || test_reader.name(0) != "bnn-quant") {
             std::cerr << "FAIL: verification mismatch\n";
             std::remove(test_bin.c_str());
             return 1;
+        }
+
+        std::cout << "  [Compiler] round-trip compile + layout verify: PASS\n";
+        std::cout << "  [Digests]  per-record SHA-256 stored == computed: PASS\n";
+
+        // Gate 4: Adversarial & failure-path verification
+        // 4a. Tampered payload detection (flip bits in string pool)
+        {
+            std::string tampered_bin = "test_tampered.bin";
+            std::ifstream src(test_bin, std::ios::binary);
+            std::vector<char> buf((std::istreambuf_iterator<char>(src)), std::istreambuf_iterator<char>());
+            src.close();
+            if (buf.size() > 100U) {
+                buf.back() ^= static_cast<char>(0xFF);
+                std::ofstream dst(tampered_bin, std::ios::binary);
+                dst.write(buf.data(), static_cast<std::streamsize>(buf.size()));
+                dst.close();
+
+                bnn::BinarySkillReader tamp_reader;
+                if (tamp_reader.open(tampered_bin, true)) {
+                    std::string t_err;
+                    if (tamp_reader.verify_record_digests(&t_err)) {
+                        std::cerr << "FAIL: Tampered payload was NOT detected by verify_record_digests!\n";
+                        tamp_reader.close();
+                        std::remove(tampered_bin.c_str());
+                        std::remove(test_bin.c_str());
+                        return 1;
+                    }
+                    tamp_reader.close();
+                }
+                std::remove(tampered_bin.c_str());
+            }
+            std::cout << "  [Adversarial] Tampered payload detection: PASS (digest mismatch caught)\n";
+        }
+
+        // 4b. Corrupted magic bytes rejected safely
+        {
+            std::string corrupt_bin = "test_corrupt_magic.bin";
+            std::ofstream dst(corrupt_bin, std::ios::binary);
+            char bad_hdr[20] = {'N', 'O', 'P', 'E', 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
+            dst.write(bad_hdr, 20);
+            dst.close();
+
+            bnn::BinarySkillReader bad_reader;
+            const bool opened = bad_reader.open(corrupt_bin, true);
+            if (opened || bad_reader.is_valid()) {
+                std::cerr << "FAIL: Corrupted magic was accepted or left reader in valid state!\n";
+                std::remove(corrupt_bin.c_str());
+                std::remove(test_bin.c_str());
+                return 1;
+            }
+            std::remove(corrupt_bin.c_str());
+            std::cout << "  [Adversarial] Corrupted magic rejected: PASS (open() returned false, reader safe)\n";
+        }
+
+        // 4c. Truncated header (< 20 bytes) rejected safely
+        {
+            std::string trunc_bin = "test_truncated.bin";
+            std::ofstream dst(trunc_bin, std::ios::binary);
+            dst.write("SHORT", 5);
+            dst.close();
+
+            bnn::BinarySkillReader trunc_reader;
+            const bool opened = trunc_reader.open(trunc_bin, true);
+            if (opened || trunc_reader.is_valid()) {
+                std::cerr << "FAIL: Truncated file was accepted or left reader in valid state!\n";
+                std::remove(trunc_bin.c_str());
+                std::remove(test_bin.c_str());
+                return 1;
+            }
+            std::remove(trunc_bin.c_str());
+            std::cout << "  [Adversarial] Truncated file rejected: PASS (open() returned false, reader safe)\n";
+        }
+
+        // 4d. Unmapped/out-of-bounds dereference throws std::out_of_range
+        {
+            bnn::BinarySkillReader empty_reader;
+            bool threw = false;
+            try {
+                (void)empty_reader.record(0U);
+            } catch (const std::out_of_range&) {
+                threw = true;
+            }
+            if (!threw) {
+                std::cerr << "FAIL: record(0) on unmapped reader did not throw std::out_of_range!\n";
+                std::remove(test_bin.c_str());
+                return 1;
+            }
+            std::cout << "  [Adversarial] Unmapped dereference throws out_of_range: PASS\n";
         }
 
         std::cout << "SUCCESS: compiled and verified " << test_reader.count() << " skills in pure C++!\n";
@@ -125,8 +242,11 @@ int main(int argc, char* argv[]) {
                                << "DESCRIPTION PREVIEW\n";
         std::cout << "-------------------------------------------------------------------------------------------------\n";
         for (size_t i = 0; i < reader.count(); ++i) {
-            std::string desc = std::string(reader.description(i));
-            if (desc.size() > 40) desc = desc.substr(0, 37) + "...";
+            std::string desc(reader.description(i));
+            if (desc.size() > 40) {
+                desc.resize(37);
+                desc += "...";
+            }
             std::cout << std::left << std::setw(6)  << (i + 1)
                                    << std::setw(34) << reader.name(i)
                                    << std::setw(24) << reader.category_name(i)

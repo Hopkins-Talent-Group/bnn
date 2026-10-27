@@ -69,8 +69,14 @@ int main(int argc, char* argv[]) {
         return r.count();
     }));
 
-    // 2. Direct O(1) indexed access (random access across all 52 records)
-    results.push_back(run_benchmark("indexed_record_access_O1", ITERS, [&]() -> size_t {
+    // 2. Direct O(1) single-record indexed access (constant time pointer dereference)
+    results.push_back(run_benchmark("single_record_access_O1", ITERS, [&]() -> size_t {
+        const auto& rec = reader.record(25);
+        return rec.category_id;
+    }));
+
+    // 3. Sequential indexed traversal across all 52 records
+    results.push_back(run_benchmark("indexed_record_access_all_52", ITERS, [&]() -> size_t {
         size_t dummy = 0;
         for (size_t i = 0; i < reader.count(); ++i) {
             dummy += reader.name(i).size() + reader.flags(i);
@@ -139,9 +145,12 @@ int main(int argc, char* argv[]) {
     // Write machine-readable JSON results schema (Section 3.4 compliance)
     std::ofstream json_out("benchmark_results.json");
     if (json_out.is_open()) {
+        std::string safe_bin_path = bin_path;
+        std::replace(safe_bin_path.begin(), safe_bin_path.end(), '\\', '/');
+
         json_out << "{\n"
                  << "  \"schema_version\": 1,\n"
-                 << "  \"binary_file\": \"" << bin_path << "\",\n"
+                 << "  \"binary_file\": \"" << safe_bin_path << "\",\n"
                  << "  \"file_size_bytes\": " << reader.file_size() << ",\n"
                  << "  \"skill_count\": " << reader.count() << ",\n"
                  << "  \"file_sha256\": \"" << reader.compute_file_sha256_hex() << "\",\n"

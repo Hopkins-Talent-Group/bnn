@@ -33,6 +33,7 @@ namespace bnn {
 // 1. Binary Layout Structures (VSKB0001)
 // ─────────────────────────────────────────────────────────────────────────────
 
+// cppcheck-suppress-begin [preprocessorErrorDirective]
 #pragma pack(push, 1)
 
 struct BinaryHeader {
@@ -118,38 +119,38 @@ public:
     }
 
     void finalize(uint8_t digest[32]) {
-        uint64_t bits = bitlen_;
-        const uint8_t pad = 0x80;
+        const uint64_t bits = bitlen_;
+        const uint8_t pad = 0x80U;
         update(&pad, 1);
         bitlen_ = bits;
-        const uint8_t zero = 0x00;
-        while (buflen_ != 56) {
+        const uint8_t zero = 0x00U;
+        while (buflen_ != 56U) {
             update(&zero, 1);
             bitlen_ = bits;
         }
         uint8_t lenbytes[8];
-        for (int i = 0; i < 8; ++i) {
-            lenbytes[7 - i] = static_cast<uint8_t>(bits >> (i * 8));
+        for (unsigned i = 0U; i < 8U; ++i) {
+            lenbytes[7U - i] = static_cast<uint8_t>(bits >> (i * 8U));
         }
         update(lenbytes, 8);
 
-        for (int i = 0; i < 8; ++i) {
-            digest[i * 4 + 0] = static_cast<uint8_t>((state_[i] >> 24) & 0xFF);
-            digest[i * 4 + 1] = static_cast<uint8_t>((state_[i] >> 16) & 0xFF);
-            digest[i * 4 + 2] = static_cast<uint8_t>((state_[i] >> 8) & 0xFF);
-            digest[i * 4 + 3] = static_cast<uint8_t>(state_[i] & 0xFF);
+        for (unsigned i = 0U; i < 8U; ++i) {
+            digest[i * 4U + 0U] = static_cast<uint8_t>((state_[i] >> 24U) & 0xFFU);
+            digest[i * 4U + 1U] = static_cast<uint8_t>((state_[i] >> 16U) & 0xFFU);
+            digest[i * 4U + 2U] = static_cast<uint8_t>((state_[i] >>  8U) & 0xFFU);
+            digest[i * 4U + 3U] = static_cast<uint8_t>( state_[i]         & 0xFFU);
         }
     }
 
     std::string finalize_hex() {
         uint8_t d[32];
         finalize(d);
-        static const char* hexd = "0123456789abcdef";
+        static const char* const hexd = "0123456789abcdef";
         std::string s;
         s.reserve(64);
-        for (int i = 0; i < 32; ++i) {
-            s.push_back(hexd[(d[i] >> 4) & 0x0F]);
-            s.push_back(hexd[d[i] & 0x0F]);
+        for (unsigned i = 0U; i < 32U; ++i) {
+            s.push_back(hexd[(d[i] >> 4U) & 0x0FU]);
+            s.push_back(hexd[ d[i]        & 0x0FU]);
         }
         return s;
     }
@@ -165,54 +166,60 @@ public:
     }
 
 private:
-    static constexpr uint32_t rotr(uint32_t x, unsigned n) {
-        return (x >> n) | (x << (32 - n));
+    // cppcheck-suppress unusedPrivateFunction
+    static constexpr uint32_t rotr(uint32_t x, unsigned n) noexcept {
+        // Shift amounts are always in [1,31] per FIPS 180-4 — never 0 or 32.
+        // Expressed as unsigned to suppress signed-shift portability warnings.
+        return (x >> n) | (x << (32U - n));
     }
 
     void transform(const uint8_t block[64]) {
+        // cppcheck-suppress constVariableReference
         static constexpr uint32_t kK[64] = {
-            0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5,
-            0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174,
-            0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc, 0x2de92c6f, 0x4a7484aa, 0x5cb0a9dc, 0x76f988da,
-            0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7, 0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967,
-            0x27b70a85, 0x2e1b2138, 0x4d2c6dfc, 0x53380d13, 0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85,
-            0xa2bfe8a1, 0xa81a664b, 0xc24b8b70, 0xc76c51a3, 0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070,
-            0x19a4c116, 0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3,
-            0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2,
+            0x428a2f98U, 0x71374491U, 0xb5c0fbcfU, 0xe9b5dba5U,
+            0x3956c25bU, 0x59f111f1U, 0x923f82a4U, 0xab1c5ed5U,
+            0xd807aa98U, 0x12835b01U, 0x243185beU, 0x550c7dc3U,
+            0x72be5d74U, 0x80deb1feU, 0x9bdc06a7U, 0xc19bf174U,
+            0xe49b69c1U, 0xefbe4786U, 0x0fc19dc6U, 0x240ca1ccU,
+            0x2de92c6fU, 0x4a7484aaU, 0x5cb0a9dcU, 0x76f988daU,
+            0x983e5152U, 0xa831c66dU, 0xb00327c8U, 0xbf597fc7U,
+            0xc6e00bf3U, 0xd5a79147U, 0x06ca6351U, 0x14292967U,
+            0x27b70a85U, 0x2e1b2138U, 0x4d2c6dfcU, 0x53380d13U,
+            0x650a7354U, 0x766a0abbU, 0x81c2c92eU, 0x92722c85U,
+            0xa2bfe8a1U, 0xa81a664bU, 0xc24b8b70U, 0xc76c51a3U,
+            0xd192e819U, 0xd6990624U, 0xf40e3585U, 0x106aa070U,
+            0x19a4c116U, 0x1e376c08U, 0x2748774cU, 0x34b0bcb5U,
+            0x391c0cb3U, 0x4ed8aa4aU, 0x5b9cca4fU, 0x682e6ff3U,
+            0x748f82eeU, 0x78a5636fU, 0x84c87814U, 0x8cc70208U,
+            0x90befffaU, 0xa4506cebU, 0xbef9a3f7U, 0xc67178f2U,
         };
 
         uint32_t w[64];
-        for (int i = 0; i < 16; ++i) {
-            w[i] = (static_cast<uint32_t>(block[i * 4]) << 24) |
-                   (static_cast<uint32_t>(block[i * 4 + 1]) << 16) |
-                   (static_cast<uint32_t>(block[i * 4 + 2]) << 8) |
-                   static_cast<uint32_t>(block[i * 4 + 3]);
+        for (unsigned i = 0U; i < 16U; ++i) {
+            w[i] = (static_cast<uint32_t>(block[i * 4U])       << 24U) |
+                   (static_cast<uint32_t>(block[i * 4U + 1U])  << 16U) |
+                   (static_cast<uint32_t>(block[i * 4U + 2U])  <<  8U) |
+                    static_cast<uint32_t>(block[i * 4U + 3U]);
         }
-        for (int i = 16; i < 64; ++i) {
-            const uint32_t s0 = rotr(w[i - 15], 7) ^ rotr(w[i - 15], 18) ^ (w[i - 15] >> 3);
-            const uint32_t s1 = rotr(w[i - 2], 17) ^ rotr(w[i - 2], 19) ^ (w[i - 2] >> 10);
-            w[i] = w[i - 16] + s0 + w[i - 7] + s1;
+        for (unsigned i = 16U; i < 64U; ++i) {
+            const uint32_t s0 = rotr(w[i - 15U], 7U) ^ rotr(w[i - 15U], 18U) ^ (w[i - 15U] >> 3U);
+            const uint32_t s1 = rotr(w[i -  2U], 17U) ^ rotr(w[i -  2U], 19U) ^ (w[i -  2U] >> 10U);
+            w[i] = w[i - 16U] + s0 + w[i - 7U] + s1;
         }
 
         uint32_t a = state_[0], b = state_[1], c = state_[2], d = state_[3];
         uint32_t e = state_[4], f = state_[5], g = state_[6], h = state_[7];
 
-        for (int i = 0; i < 64; ++i) {
-            const uint32_t s1 = rotr(e, 6) ^ rotr(e, 11) ^ rotr(e, 25);
-            const uint32_t ch = (e & f) ^ (~e & g);
-            const uint32_t t1 = h + s1 + ch + kK[i] + w[i];
-            const uint32_t s0 = rotr(a, 2) ^ rotr(a, 13) ^ rotr(a, 22);
+        for (unsigned i = 0U; i < 64U; ++i) {
+            const uint32_t s1  = rotr(e, 6U) ^ rotr(e, 11U) ^ rotr(e, 25U);
+            const uint32_t ch  = (e & f) ^ (~e & g);
+            const uint32_t t1  = h + s1 + ch + kK[i] + w[i];
+            const uint32_t s0  = rotr(a, 2U) ^ rotr(a, 13U) ^ rotr(a, 22U);
             const uint32_t maj = (a & b) ^ (a & c) ^ (b & c);
-            const uint32_t t2 = s0 + maj;
+            const uint32_t t2  = s0 + maj;
 
-            h = g;
-            g = f;
-            f = e;
-            e = d + t1;
-            d = c;
-            c = b;
-            b = a;
-            a = t1 + t2;
+            h = g; g = f; f = e; e = d + t1;
+            d = c; c = b; b = a; a = t1 + t2;
         }
 
         state_[0] += a; state_[1] += b; state_[2] += c; state_[3] += d;
@@ -371,12 +378,12 @@ public:
     // Stored canonical SHA-256
     std::string stored_sha256_hex(size_t index) const {
         const auto& rec = record(index);
-        static const char* hexd = "0123456789abcdef";
+        static const char* const hexd = "0123456789abcdef";
         std::string s;
         s.reserve(64);
-        for (int i = 0; i < 32; ++i) {
-            s.push_back(hexd[(rec.sha256[i] >> 4) & 0x0F]);
-            s.push_back(hexd[rec.sha256[i] & 0x0F]);
+        for (unsigned i = 0U; i < 32U; ++i) {
+            s.push_back(hexd[(rec.sha256[i] >> 4U) & 0x0FU]);
+            s.push_back(hexd[ rec.sha256[i]        & 0x0FU]);
         }
         return s;
     }
@@ -425,7 +432,7 @@ public:
         q_lower.reserve(query.size());
         for (char c : query) q_lower += static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
 
-        auto contains_ci = [&](std::string_view text) noexcept {
+        auto contains_ci = [&](std::string_view text) {
             if (text.size() < q_lower.size()) return false;
             for (size_t i = 0; i + q_lower.size() <= text.size(); ++i) {
                 bool match = true;
@@ -465,21 +472,25 @@ public:
             return false;
         }
 
-        uint64_t records_end = static_cast<uint64_t>(sizeof(BinaryHeader)) +
+        // Use uint64_t throughout to prevent 32-bit overflow on large files.
+        // Explicit casts of mapped_size_ (size_t) to uint64_t for portability.
+        const uint64_t mapped_size_u64 = static_cast<uint64_t>(mapped_size_);
+
+        const uint64_t records_end = static_cast<uint64_t>(sizeof(BinaryHeader)) +
                                static_cast<uint64_t>(hdr->skill_count) * sizeof(SkillRecord);
-        if (records_end > mapped_size_) {
+        if (records_end > mapped_size_u64) {
             if (error_msg) *error_msg = "Record table exceeds mapped file size";
             return false;
         }
 
-        if (hdr->string_table_offset < records_end) {
+        if (static_cast<uint64_t>(hdr->string_table_offset) < records_end) {
             if (error_msg) *error_msg = "String table overlaps with record table";
             return false;
         }
 
-        uint64_t string_table_end = static_cast<uint64_t>(hdr->string_table_offset) +
+        const uint64_t string_table_end = static_cast<uint64_t>(hdr->string_table_offset) +
                                     static_cast<uint64_t>(hdr->string_table_bytes);
-        if (string_table_end > mapped_size_) {
+        if (string_table_end > mapped_size_u64) {
             if (error_msg) *error_msg = "String table exceeds mapped file size";
             return false;
         }

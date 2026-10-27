@@ -4,6 +4,13 @@ project(binary_skill CXX)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+# Portable compiler warning flags
+if(MSVC)
+    add_compile_options(/W4 /WX /permissive-)
+else()
+    add_compile_options(-Wall -Wextra -Wpedantic -Wno-missing-field-initializers)
+endif()
+
 add_executable(binary_skill_cli main.cpp binary_skill.hpp)
 target_include_directories(binary_skill_cli PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 

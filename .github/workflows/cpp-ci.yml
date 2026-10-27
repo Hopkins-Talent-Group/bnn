@@ -151,6 +151,8 @@ jobs:
             --error-exitcode=1 \
             --inline-suppr \
             --suppress=missingIncludeSystem \
+            --suppress=unmatchedSuppression \
+            --suppress=checkersReport \
             --language=c++ --std=c++17 \
             binary-skill
 

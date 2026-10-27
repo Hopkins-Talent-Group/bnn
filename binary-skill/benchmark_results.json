@@ -1,0 +1,90 @@
+{
+  "schema_version": 1,
+  "binary_file": "secondbrain.bin",
+  "file_size_bytes": 510896,
+  "skill_count": 52,
+  "file_sha256": "5e4ccf5be3b0132ca718b29ef397392c3183441dc6ae2cecc91e84bbc9e3be9f",
+  "is_memory_mapped": true,
+  "results": [
+    {
+      "operation": "open_mmap",
+      "samples": 50,
+      "min_ns": 59700,
+      "median_ns": 80900,
+      "p95_ns": 153800,
+      "max_ns": 188800,
+      "median_us": 80.9,
+      "matches": 52
+    },
+    {
+      "operation": "indexed_record_access_O1",
+      "samples": 50,
+      "min_ns": 400,
+      "median_ns": 600,
+      "p95_ns": 800,
+      "max_ns": 10000,
+      "median_us": 0.6,
+      "matches": 975
+    },
+    {
+      "operation": "exact_name_lookup",
+      "samples": 50,
+      "min_ns": 200,
+      "median_ns": 300,
+      "p95_ns": 400,
+      "max_ns": 1000,
+      "median_us": 0.3,
+      "matches": 1
+    },
+    {
+      "operation": "category_lookup_nvidia",
+      "samples": 50,
+      "min_ns": 1500,
+      "median_ns": 1700,
+      "p95_ns": 3000,
+      "max_ns": 10400,
+      "median_us": 1.7,
+      "matches": 5
+    },
+    {
+      "operation": "search_common_nvidia",
+      "samples": 50,
+      "min_ns": 1653100,
+      "median_ns": 2982500,
+      "p95_ns": 7838900,
+      "max_ns": 16466000,
+      "median_us": 2982.5,
+      "matches": 5
+    },
+    {
+      "operation": "search_rare_whisper",
+      "samples": 50,
+      "min_ns": 1848500,
+      "median_ns": 3445000,
+      "p95_ns": 9130100,
+      "max_ns": 9874400,
+      "median_us": 3445,
+      "matches": 2
+    },
+    {
+      "operation": "search_nomatch",
+      "samples": 50,
+      "min_ns": 1489800,
+      "median_ns": 2458300,
+      "p95_ns": 4331600,
+      "max_ns": 5878800,
+      "median_us": 2458.3,
+      "matches": 0
+    },
+    {
+      "operation": "sha256_whole_file",
+      "samples": 20,
+      "min_ns": 2672200,
+      "median_ns": 3249300,
+      "p95_ns": 3868300,
+      "max_ns": 3868300,
+      "median_us": 3249.3,
+      "matches": 64
+    }
+  ]
+}

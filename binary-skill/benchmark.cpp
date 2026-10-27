@@ -1,0 +1,170 @@
+#include <iostream>
+#include <string>
+#include <vector>
+#include <chrono>
+#include <algorithm>
+#include <fstream>
+#include <iomanip>
+#include "binary_skill.hpp"
+
+struct StatResult {
+    std::string operation;
+    size_t samples;
+    uint64_t min_ns;
+    uint64_t max_ns;
+    uint64_t median_ns;
+    uint64_t p95_ns;
+    size_t matches;
+};
+
+template <typename Func>
+StatResult run_benchmark(const std::string& op_name, size_t iterations, Func&& fn) {
+    std::vector<uint64_t> times;
+    times.reserve(iterations);
+    size_t matches = 0;
+
+    for (size_t i = 0; i < iterations; ++i) {
+        auto t0 = std::chrono::high_resolution_clock::now();
+        size_t m = fn();
+        auto t1 = std::chrono::high_resolution_clock::now();
+        times.push_back(std::chrono::duration_cast<std::chrono::nanoseconds>(t1 - t0).count());
+        matches = m;
+    }
+
+    std::sort(times.begin(), times.end());
+
+    StatResult res;
+    res.operation = op_name;
+    res.samples = iterations;
+    res.min_ns = times.front();
+    res.max_ns = times.back();
+    res.median_ns = times[iterations / 2];
+    res.p95_ns = times[static_cast<size_t>(iterations * 0.95)];
+    res.matches = matches;
+    return res;
+}
+
+int main(int argc, char* argv[]) {
+    std::string bin_path = "secondbrain.bin";
+    if (argc >= 2) bin_path = argv[1];
+
+    std::cout << "Starting BNN Binary-Skill Benchmark Suite (30 iterations per op)...\n";
+
+    bnn::BinarySkillReader reader;
+    if (!reader.open(bin_path, true)) {
+        bin_path = "binary-skill/" + bin_path;
+        if (!reader.open(bin_path, true)) {
+            std::cerr << "Error: Could not open " << bin_path << "\n";
+            return 1;
+        }
+    }
+
+    const size_t ITERS = 50; // 50 repetitions for robust median/p95
+    std::vector<StatResult> results;
+
+    // 1. Process startup & memory map
+    results.push_back(run_benchmark("open_mmap", ITERS, [&]() -> size_t {
+        bnn::BinarySkillReader r;
+        r.open(bin_path, true);
+        return r.count();
+    }));
+
+    // 2. Direct O(1) indexed access (random access across all 52 records)
+    results.push_back(run_benchmark("indexed_record_access_O1", ITERS, [&]() -> size_t {
+        size_t dummy = 0;
+        for (size_t i = 0; i < reader.count(); ++i) {
+            dummy += reader.name(i).size() + reader.flags(i);
+        }
+        return dummy;
+    }));
+
+    // 3. Exact name lookup (O(N) linear search)
+    results.push_back(run_benchmark("exact_name_lookup", ITERS, [&]() -> size_t {
+        int idx = reader.find_by_name("omniroute");
+        return idx >= 0 ? 1 : 0;
+    }));
+
+    // 4. Category lookup (O(N) search)
+    results.push_back(run_benchmark("category_lookup_nvidia", ITERS, [&]() -> size_t {
+        auto matches = reader.find_by_category(bnn::CAT_NVIDIA_STACK);
+        return matches.size();
+    }));
+
+    // 5. Keyword search - common query ("nvidia")
+    results.push_back(run_benchmark("search_common_nvidia", ITERS, [&]() -> size_t {
+        auto matches = reader.search_keyword("nvidia");
+        return matches.size();
+    }));
+
+    // 6. Keyword search - rare query ("whisper")
+    results.push_back(run_benchmark("search_rare_whisper", ITERS, [&]() -> size_t {
+        auto matches = reader.search_keyword("whisper");
+        return matches.size();
+    }));
+
+    // 7. Keyword search - no match query
+    results.push_back(run_benchmark("search_nomatch", ITERS, [&]() -> size_t {
+        auto matches = reader.search_keyword("xyznonexistent999");
+        return matches.size();
+    }));
+
+    // 8. Whole-file SHA-256 calculation
+    results.push_back(run_benchmark("sha256_whole_file", 20, [&]() -> size_t {
+        std::string h = reader.compute_file_sha256_hex();
+        return h.size();
+    }));
+
+    // Output human-readable table
+    std::cout << "\n========================================================================================\n";
+    std::cout << std::left << std::setw(30) << "Operation"
+              << std::setw(10) << "Samples"
+              << std::setw(14) << "Min (us)"
+              << std::setw(14) << "Median (us)"
+              << std::setw(14) << "P95 (us)"
+              << std::setw(14) << "Max (us)"
+              << "Matches\n";
+    std::cout << "========================================================================================\n";
+
+    for (const auto& r : results) {
+        std::cout << std::left << std::setw(30) << r.operation
+                  << std::setw(10) << r.samples
+                  << std::setw(14) << (r.min_ns / 1000.0)
+                  << std::setw(14) << (r.median_ns / 1000.0)
+                  << std::setw(14) << (r.p95_ns / 1000.0)
+                  << std::setw(14) << (r.max_ns / 1000.0)
+                  << r.matches << "\n";
+    }
+    std::cout << "========================================================================================\n";
+
+    // Write machine-readable JSON results schema (Section 3.4 compliance)
+    std::ofstream json_out("benchmark_results.json");
+    if (json_out.is_open()) {
+        json_out << "{\n"
+                 << "  \"schema_version\": 1,\n"
+                 << "  \"binary_file\": \"" << bin_path << "\",\n"
+                 << "  \"file_size_bytes\": " << reader.file_size() << ",\n"
+                 << "  \"skill_count\": " << reader.count() << ",\n"
+                 << "  \"file_sha256\": \"" << reader.compute_file_sha256_hex() << "\",\n"
+                 << "  \"is_memory_mapped\": " << (reader.is_memory_mapped() ? "true" : "false") << ",\n"
+                 << "  \"results\": [\n";
+
+        for (size_t i = 0; i < results.size(); ++i) {
+            const auto& r = results[i];
+            json_out << "    {\n"
+                     << "      \"operation\": \"" << r.operation << "\",\n"
+                     << "      \"samples\": " << r.samples << ",\n"
+                     << "      \"min_ns\": " << r.min_ns << ",\n"
+                     << "      \"median_ns\": " << r.median_ns << ",\n"
+                     << "      \"p95_ns\": " << r.p95_ns << ",\n"
+                     << "      \"max_ns\": " << r.max_ns << ",\n"
+                     << "      \"median_us\": " << (r.median_ns / 1000.0) << ",\n"
+                     << "      \"matches\": " << r.matches << "\n"
+                     << "    }" << (i + 1 < results.size() ? "," : "") << "\n";
+        }
+
+        json_out << "  ]\n}\n";
+        std::cout << "Wrote machine-readable JSON metrics to benchmark_results.json\n";
+    }
+
+    return 0;
+}

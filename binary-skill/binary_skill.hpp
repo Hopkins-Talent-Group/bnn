@@ -10,8 +10,28 @@
 #include <iomanip>
 #include <algorithm>
 #include <stdexcept>
+#include <memory>
+
+#ifdef _WIN32
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#include <sys/stat.h>
+#include <fcntl.h>
+#include <unistd.h>
+#endif
 
 namespace bnn {
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 1. Binary Layout Structures (VSKB0001)
+// ─────────────────────────────────────────────────────────────────────────────
 
 #pragma pack(push, 1)
 
@@ -34,8 +54,8 @@ struct SkillRecord {
     uint32_t desc_len;            // Byte length of description
     uint32_t body_offset;         // Offset into string pool
     uint32_t body_len;            // Byte length of markdown body
-    uint8_t  sha256[32];          // Cryptographic SHA-256 of source definition
-    uint8_t  _pad[44];            // Alignment padding
+    uint8_t  sha256[32];          // Cryptographic SHA-256 of canonical source
+    uint8_t  _pad[44];            // Cache-line alignment padding
 };
 
 static_assert(sizeof(SkillRecord) == 128, "SkillRecord must be exactly 128 bytes");
@@ -64,60 +84,246 @@ inline const char* category_to_string(uint16_t cat) {
     }
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// 2. Self-Contained SHA-256 Implementation (NIST FIPS 180-4)
+// ─────────────────────────────────────────────────────────────────────────────
+
+class Sha256 {
+public:
+    Sha256() : bitlen_(0), buflen_(0) {
+        state_[0] = 0x6a09e667;
+        state_[1] = 0xbb67ae85;
+        state_[2] = 0x3c6ef372;
+        state_[3] = 0xa54ff53a;
+        state_[4] = 0x510e527f;
+        state_[5] = 0x9b05688c;
+        state_[6] = 0x1f83d9ab;
+        state_[7] = 0x5be0cd19;
+    }
+
+    void update(const void* data, size_t len) {
+        const auto* p = static_cast<const uint8_t*>(data);
+        bitlen_ += static_cast<uint64_t>(len) * 8;
+        while (len > 0) {
+            const size_t take = std::min(len, static_cast<size_t>(64) - buflen_);
+            std::memcpy(buffer_ + buflen_, p, take);
+            buflen_ += take;
+            p += take;
+            len -= take;
+            if (buflen_ == 64) {
+                transform(buffer_);
+                buflen_ = 0;
+            }
+        }
+    }
+
+    void finalize(uint8_t digest[32]) {
+        uint64_t bits = bitlen_;
+        const uint8_t pad = 0x80;
+        update(&pad, 1);
+        bitlen_ = bits;
+        const uint8_t zero = 0x00;
+        while (buflen_ != 56) {
+            update(&zero, 1);
+            bitlen_ = bits;
+        }
+        uint8_t lenbytes[8];
+        for (int i = 0; i < 8; ++i) {
+            lenbytes[7 - i] = static_cast<uint8_t>(bits >> (i * 8));
+        }
+        update(lenbytes, 8);
+
+        for (int i = 0; i < 8; ++i) {
+            digest[i * 4 + 0] = static_cast<uint8_t>((state_[i] >> 24) & 0xFF);
+            digest[i * 4 + 1] = static_cast<uint8_t>((state_[i] >> 16) & 0xFF);
+            digest[i * 4 + 2] = static_cast<uint8_t>((state_[i] >> 8) & 0xFF);
+            digest[i * 4 + 3] = static_cast<uint8_t>(state_[i] & 0xFF);
+        }
+    }
+
+    std::string finalize_hex() {
+        uint8_t d[32];
+        finalize(d);
+        static const char* hexd = "0123456789abcdef";
+        std::string s;
+        s.reserve(64);
+        for (int i = 0; i < 32; ++i) {
+            s.push_back(hexd[(d[i] >> 4) & 0x0F]);
+            s.push_back(hexd[d[i] & 0x0F]);
+        }
+        return s;
+    }
+
+    static std::string hash_hex(const void* data, size_t len) {
+        Sha256 h;
+        h.update(data, len);
+        return h.finalize_hex();
+    }
+
+    static std::string hash_hex(std::string_view sv) {
+        return hash_hex(sv.data(), sv.size());
+    }
+
+private:
+    static constexpr uint32_t rotr(uint32_t x, unsigned n) {
+        return (x >> n) | (x << (32 - n));
+    }
+
+    void transform(const uint8_t block[64]) {
+        static constexpr uint32_t kK[64] = {
+            0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5,
+            0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174,
+            0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc, 0x2de92c6f, 0x4a7484aa, 0x5cb0a9dc, 0x76f988da,
+            0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7, 0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967,
+            0x27b70a85, 0x2e1b2138, 0x4d2c6dfc, 0x53380d13, 0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85,
+            0xa2bfe8a1, 0xa81a664b, 0xc24b8b70, 0xc76c51a3, 0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070,
+            0x19a4c116, 0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3,
+            0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2,
+        };
+
+        uint32_t w[64];
+        for (int i = 0; i < 16; ++i) {
+            w[i] = (static_cast<uint32_t>(block[i * 4]) << 24) |
+                   (static_cast<uint32_t>(block[i * 4 + 1]) << 16) |
+                   (static_cast<uint32_t>(block[i * 4 + 2]) << 8) |
+                   static_cast<uint32_t>(block[i * 4 + 3]);
+        }
+        for (int i = 16; i < 64; ++i) {
+            const uint32_t s0 = rotr(w[i - 15], 7) ^ rotr(w[i - 15], 18) ^ (w[i - 15] >> 3);
+            const uint32_t s1 = rotr(w[i - 2], 17) ^ rotr(w[i - 2], 19) ^ (w[i - 2] >> 10);
+            w[i] = w[i - 16] + s0 + w[i - 7] + s1;
+        }
+
+        uint32_t a = state_[0], b = state_[1], c = state_[2], d = state_[3];
+        uint32_t e = state_[4], f = state_[5], g = state_[6], h = state_[7];
+
+        for (int i = 0; i < 64; ++i) {
+            const uint32_t s1 = rotr(e, 6) ^ rotr(e, 11) ^ rotr(e, 25);
+            const uint32_t ch = (e & f) ^ (~e & g);
+            const uint32_t t1 = h + s1 + ch + kK[i] + w[i];
+            const uint32_t s0 = rotr(a, 2) ^ rotr(a, 13) ^ rotr(a, 22);
+            const uint32_t maj = (a & b) ^ (a & c) ^ (b & c);
+            const uint32_t t2 = s0 + maj;
+
+            h = g;
+            g = f;
+            f = e;
+            e = d + t1;
+            d = c;
+            c = b;
+            b = a;
+            a = t1 + t2;
+        }
+
+        state_[0] += a; state_[1] += b; state_[2] += c; state_[3] += d;
+        state_[4] += e; state_[5] += f; state_[6] += g; state_[7] += h;
+    }
+
+    uint32_t state_[8];
+    uint64_t bitlen_;
+    uint8_t  buffer_[64];
+    size_t   buflen_;
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 3. Checked Bounds & Arithmetic Helpers
+// ─────────────────────────────────────────────────────────────────────────────
+
+inline bool check_bounds(uint32_t offset, uint32_t length, uint32_t max_size) noexcept {
+    if (offset > max_size) return false;
+    if (length > max_size - offset) return false;
+    return true;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 4. Native OS Memory-Mapped / Buffered Skill Reader
+// ─────────────────────────────────────────────────────────────────────────────
+
 class BinarySkillReader {
 public:
     BinarySkillReader() = default;
+    ~BinarySkillReader() { close(); }
 
-    bool open(const std::string& filepath) {
-        std::ifstream file(filepath, std::ios::binary | std::ios::ate);
-        if (!file.is_open()) {
-            return false;
-        }
+    BinarySkillReader(const BinarySkillReader&) = delete;
+    BinarySkillReader& operator=(const BinarySkillReader&) = delete;
 
-        std::streamsize size = file.tellg();
-        if (size < static_cast<std::streamsize>(sizeof(BinaryHeader))) {
-            return false;
-        }
-
-        file.seekg(0, std::ios::beg);
-        buffer_.resize(static_cast<size_t>(size));
-        if (!file.read(reinterpret_cast<char*>(buffer_.data()), size)) {
-            buffer_.clear();
-            return false;
-        }
-
-        const auto* hdr = header();
-        if (std::memcmp(hdr->magic, "VSKB", 4) != 0 || hdr->version != 1) {
-            buffer_.clear();
-            return false;
-        }
-
-        size_t expected_min = sizeof(BinaryHeader) + hdr->skill_count * sizeof(SkillRecord);
-        if (buffer_.size() < expected_min || buffer_.size() < (hdr->string_table_offset + hdr->string_table_bytes)) {
-            buffer_.clear();
-            return false;
-        }
-
-        return true;
+    BinarySkillReader(BinarySkillReader&& other) noexcept {
+        move_from(std::move(other));
     }
 
-    bool is_valid() const {
-        return !buffer_.empty();
+    BinarySkillReader& operator=(BinarySkillReader&& other) noexcept {
+        if (this != &other) {
+            close();
+            move_from(std::move(other));
+        }
+        return *this;
     }
 
-    const BinaryHeader* header() const {
-        return reinterpret_cast<const BinaryHeader*>(buffer_.data());
+    void close() {
+#ifdef _WIN32
+        if (mapped_data_ && is_mmap_) {
+            UnmapViewOfFile(mapped_data_);
+        }
+        if (map_handle_) {
+            CloseHandle(map_handle_);
+            map_handle_ = NULL;
+        }
+        if (file_handle_ != INVALID_HANDLE_VALUE) {
+            CloseHandle(file_handle_);
+            file_handle_ = INVALID_HANDLE_VALUE;
+        }
+#else
+        if (mapped_data_ && is_mmap_) {
+            ::munmap(const_cast<uint8_t*>(mapped_data_), mapped_size_);
+        }
+        if (file_fd_ >= 0) {
+            ::close(file_fd_);
+            file_fd_ = -1;
+        }
+#endif
+        mapped_data_ = nullptr;
+        mapped_size_ = 0;
+        is_mmap_ = false;
+        fallback_buffer_.clear();
     }
 
-    size_t count() const {
+    bool open(const std::string& filepath, bool prefer_mmap = true) {
+        close();
+
+        if (prefer_mmap) {
+            if (open_mmap(filepath)) {
+                if (validate_layout()) return true;
+                close();
+            }
+        }
+
+        // Fallback to buffered read
+        if (open_buffered(filepath)) {
+            return validate_layout();
+        }
+
+        close();
+        return false;
+    }
+
+    bool is_valid() const noexcept { return mapped_data_ != nullptr && mapped_size_ >= sizeof(BinaryHeader); }
+    bool is_memory_mapped() const noexcept { return is_mmap_; }
+    size_t file_size() const noexcept { return mapped_size_; }
+
+    const BinaryHeader* header() const noexcept {
+        return reinterpret_cast<const BinaryHeader*>(mapped_data_);
+    }
+
+    // Direct O(1) indexed record access
+    size_t count() const noexcept {
         return is_valid() ? header()->skill_count : 0;
     }
 
     const SkillRecord& record(size_t index) const {
         if (index >= count()) {
-            throw std::out_of_range("Skill index out of range");
+            throw std::out_of_range("Skill record index out of range");
         }
-        const uint8_t* ptr = buffer_.data() + sizeof(BinaryHeader) + index * sizeof(SkillRecord);
+        const uint8_t* ptr = mapped_data_ + sizeof(BinaryHeader) + index * sizeof(SkillRecord);
         return *reinterpret_cast<const SkillRecord*>(ptr);
     }
 
@@ -145,32 +351,53 @@ public:
     std::string_view description(size_t index) const {
         const auto& rec = record(index);
         const auto* hdr = header();
-        if (rec.desc_offset + rec.desc_len > hdr->string_table_bytes) {
+        if (!check_bounds(rec.desc_offset, rec.desc_len, hdr->string_table_bytes)) {
             return {};
         }
-        const char* str_pool = reinterpret_cast<const char*>(buffer_.data() + hdr->string_table_offset);
-        return std::string_view(str_pool + rec.desc_offset, rec.desc_len);
+        const char* pool = reinterpret_cast<const char*>(mapped_data_ + hdr->string_table_offset);
+        return std::string_view(pool + rec.desc_offset, rec.desc_len);
     }
 
     std::string_view body(size_t index) const {
         const auto& rec = record(index);
         const auto* hdr = header();
-        if (rec.body_offset + rec.body_len > hdr->string_table_bytes) {
+        if (!check_bounds(rec.body_offset, rec.body_len, hdr->string_table_bytes)) {
             return {};
         }
-        const char* str_pool = reinterpret_cast<const char*>(buffer_.data() + hdr->string_table_offset);
-        return std::string_view(str_pool + rec.body_offset, rec.body_len);
+        const char* pool = reinterpret_cast<const char*>(mapped_data_ + hdr->string_table_offset);
+        return std::string_view(pool + rec.body_offset, rec.body_len);
     }
 
-    std::string sha256_hex(size_t index) const {
+    // Stored canonical SHA-256
+    std::string stored_sha256_hex(size_t index) const {
         const auto& rec = record(index);
-        std::ostringstream ss;
-        for (size_t i = 0; i < 32; ++i) {
-            ss << std::hex << std::setw(2) << std::setfill('0') << static_cast<int>(rec.sha256[i]);
+        static const char* hexd = "0123456789abcdef";
+        std::string s;
+        s.reserve(64);
+        for (int i = 0; i < 32; ++i) {
+            s.push_back(hexd[(rec.sha256[i] >> 4) & 0x0F]);
+            s.push_back(hexd[rec.sha256[i] & 0x0F]);
         }
-        return ss.str();
+        return s;
     }
 
+    // Computed SHA-256 over the stored description and body bytes
+    std::string compute_payload_sha256_hex(size_t index) const {
+        Sha256 h;
+        std::string_view d = description(index);
+        std::string_view b = body(index);
+        h.update(d.data(), d.size());
+        h.update(b.data(), b.size());
+        return h.finalize_hex();
+    }
+
+    // Whole-file SHA-256 verification
+    std::string compute_file_sha256_hex() const {
+        if (!is_valid()) return {};
+        return Sha256::hash_hex(mapped_data_, mapped_size_);
+    }
+
+    // Linear O(N) query methods
     int find_by_name(std::string_view query) const {
         for (size_t i = 0; i < count(); ++i) {
             if (name(i) == query) {
@@ -198,7 +425,7 @@ public:
         q_lower.reserve(query.size());
         for (char c : query) q_lower += static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
 
-        auto contains_case_insensitive = [&](std::string_view text) {
+        auto contains_ci = [&](std::string_view text) noexcept {
             if (text.size() < q_lower.size()) return false;
             for (size_t i = 0; i + q_lower.size() <= text.size(); ++i) {
                 bool match = true;
@@ -214,18 +441,183 @@ public:
         };
 
         for (size_t i = 0; i < count(); ++i) {
-            if (contains_case_insensitive(name(i)) ||
-                contains_case_insensitive(description(i)) ||
-                contains_case_insensitive(body(i))) {
+            if (contains_ci(name(i)) || contains_ci(description(i)) || contains_ci(body(i))) {
                 matches.push_back(i);
             }
         }
         return matches;
     }
 
+    // Thorough structural and arithmetic integrity verification
+    bool verify_all(std::string* error_msg = nullptr) const {
+        if (!is_valid()) {
+            if (error_msg) *error_msg = "File is not open or below minimum header size";
+            return false;
+        }
+
+        const auto* hdr = header();
+        if (std::memcmp(hdr->magic, "VSKB", 4) != 0) {
+            if (error_msg) *error_msg = "Invalid magic bytes (expected 'VSKB')";
+            return false;
+        }
+        if (hdr->version != 1) {
+            if (error_msg) *error_msg = "Unsupported version: " + std::to_string(hdr->version);
+            return false;
+        }
+
+        uint64_t records_end = static_cast<uint64_t>(sizeof(BinaryHeader)) +
+                               static_cast<uint64_t>(hdr->skill_count) * sizeof(SkillRecord);
+        if (records_end > mapped_size_) {
+            if (error_msg) *error_msg = "Record table exceeds mapped file size";
+            return false;
+        }
+
+        if (hdr->string_table_offset < records_end) {
+            if (error_msg) *error_msg = "String table overlaps with record table";
+            return false;
+        }
+
+        uint64_t string_table_end = static_cast<uint64_t>(hdr->string_table_offset) +
+                                    static_cast<uint64_t>(hdr->string_table_bytes);
+        if (string_table_end > mapped_size_) {
+            if (error_msg) *error_msg = "String table exceeds mapped file size";
+            return false;
+        }
+
+        for (size_t i = 0; i < hdr->skill_count; ++i) {
+            const auto& rec = record(i);
+            if (!check_bounds(rec.desc_offset, rec.desc_len, hdr->string_table_bytes)) {
+                if (error_msg) *error_msg = "Record #" + std::to_string(i) + " description bounds overflow";
+                return false;
+            }
+            if (!check_bounds(rec.body_offset, rec.body_len, hdr->string_table_bytes)) {
+                if (error_msg) *error_msg = "Record #" + std::to_string(i) + " body bounds overflow";
+                return false;
+            }
+            if (name(i).empty()) {
+                if (error_msg) *error_msg = "Record #" + std::to_string(i) + " has empty name";
+                return false;
+            }
+        }
+
+        return true;
+    }
+
 private:
-    std::vector<uint8_t> buffer_;
+    bool open_mmap(const std::string& filepath) {
+#ifdef _WIN32
+        HANDLE fh = CreateFileA(filepath.c_str(), GENERIC_READ, FILE_SHARE_READ, NULL,
+                                OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+        if (fh == INVALID_HANDLE_VALUE) return false;
+
+        LARGE_INTEGER sz;
+        if (!GetFileSizeEx(fh, &sz) || sz.QuadPart < static_cast<LONGLONG>(sizeof(BinaryHeader))) {
+            CloseHandle(fh);
+            return false;
+        }
+
+        HANDLE mh = CreateFileMappingA(fh, NULL, PAGE_READONLY, 0, 0, NULL);
+        if (mh == NULL) {
+            CloseHandle(fh);
+            return false;
+        }
+
+        void* view = MapViewOfFile(mh, FILE_MAP_READ, 0, 0, 0);
+        if (view == NULL) {
+            CloseHandle(mh);
+            CloseHandle(fh);
+            return false;
+        }
+
+        file_handle_ = fh;
+        map_handle_ = mh;
+        mapped_data_ = static_cast<const uint8_t*>(view);
+        mapped_size_ = static_cast<size_t>(sz.QuadPart);
+        is_mmap_ = true;
+        return true;
+#else
+        int fd = ::open(filepath.c_str(), O_RDONLY);
+        if (fd < 0) return false;
+
+        struct stat st;
+        if (::fstat(fd, &st) != 0 || st.st_size < static_cast<off_t>(sizeof(BinaryHeader))) {
+            ::close(fd);
+            return false;
+        }
+
+        void* view = ::mmap(nullptr, st.st_size, PROT_READ, MAP_SHARED, fd, 0);
+        if (view == MAP_FAILED) {
+            ::close(fd);
+            return false;
+        }
+
+        file_fd_ = fd;
+        mapped_data_ = static_cast<const uint8_t*>(view);
+        mapped_size_ = static_cast<size_t>(st.st_size);
+        is_mmap_ = true;
+        return true;
+#endif
+    }
+
+    bool open_buffered(const std::string& filepath) {
+        std::ifstream file(filepath, std::ios::binary | std::ios::ate);
+        if (!file.is_open()) return false;
+
+        std::streamsize sz = file.tellg();
+        if (sz < static_cast<std::streamsize>(sizeof(BinaryHeader))) return false;
+
+        file.seekg(0, std::ios::beg);
+        fallback_buffer_.resize(static_cast<size_t>(sz));
+        if (!file.read(reinterpret_cast<char*>(fallback_buffer_.data()), sz)) {
+            fallback_buffer_.clear();
+            return false;
+        }
+
+        mapped_data_ = fallback_buffer_.data();
+        mapped_size_ = fallback_buffer_.size();
+        is_mmap_ = false;
+        return true;
+    }
+
+    bool validate_layout() {
+        return verify_all(nullptr);
+    }
+
+    void move_from(BinarySkillReader&& other) noexcept {
+#ifdef _WIN32
+        file_handle_ = other.file_handle_;
+        map_handle_ = other.map_handle_;
+        other.file_handle_ = INVALID_HANDLE_VALUE;
+        other.map_handle_ = NULL;
+#else
+        file_fd_ = other.file_fd_;
+        other.file_fd_ = -1;
+#endif
+        mapped_data_ = other.mapped_data_;
+        mapped_size_ = other.mapped_size_;
+        is_mmap_ = other.is_mmap_;
+        fallback_buffer_ = std::move(other.fallback_buffer_);
+
+        other.mapped_data_ = nullptr;
+        other.mapped_size_ = 0;
+        other.is_mmap_ = false;
+    }
+
+#ifdef _WIN32
+    HANDLE file_handle_ = INVALID_HANDLE_VALUE;
+    HANDLE map_handle_ = NULL;
+#else
+    int file_fd_ = -1;
+#endif
+    const uint8_t* mapped_data_ = nullptr;
+    size_t mapped_size_ = 0;
+    bool is_mmap_ = false;
+    std::vector<uint8_t> fallback_buffer_;
 };
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 5. C++ Binary Compiler / Serializer
+// ─────────────────────────────────────────────────────────────────────────────
 
 class BinarySkillCompiler {
 public:

@@ -1,0 +1,35 @@
+# Build & Compiler Artifacts
+build/
+bin/
+*.obj
+*.exe
+*.pdb
+*.ilk
+*.lib
+*.dll
+*.out
+
+# Python prohibition (zero python policy in this repo)
+*.py
+*.pyc
+*.pyo
+__pycache__/
+*.whl
+*.egg-info/
+
+# Graphify & Cache
+graphify-out/
+.cache/
+.vscode/
+.idea/
+
+# Non-distilled skills & bloated markdown/json dumps
+skills/
+raw_skills/
+*.sqlite
+*.db
+*.json
+!compile_commands.json
+
+# Explicitly track pure binary and C++ sources
+!binary-skill/secondbrain.bin

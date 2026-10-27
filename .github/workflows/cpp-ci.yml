@@ -132,6 +132,28 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
 
+  static-analysis:
+    name: C++ static analysis (Cppcheck)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Cppcheck
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes cppcheck
+
+      - name: Analyze all C++ source and headers
+        run: |
+          cppcheck --version
+          cppcheck --enable=warning,performance,portability \
+            --error-exitcode=1 \
+            --inline-suppr \
+            --suppress=missingIncludeSystem \
+            --language=c++ --std=c++17 \
+            binary-skill
+
   linux-sanitizers:
     name: Linux ASan + UBSan
     runs-on: ubuntu-latest

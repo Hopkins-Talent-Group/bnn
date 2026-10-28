@@ -32,10 +32,13 @@ The nanoLM source was ported from [`vitrixLab/blank/ai/gpt.cpp`](https://github.
 
 For each weight row (r), the reference implementation derives a symmetric row scale from the maximum absolute weight:
 
-\[
-m_r = \max_c |W_{r,c}|, \qquad
-s_r = \begin{cases}m_r/7,&m_r>0\\0,&m_r=0\end{cases}
-\]
+$$
+m_r = \max_c |W_{r,c}|, \qquad 
+s_r = \begin{cases} 
+m_r/7, & m_r > 0 \\ 
+0, & m_r = 0 
+\end{cases}
+$$
 
 Nonzero rows are quantized to signed integer values in ([-7,7]), with clipping after rounding. Two 4-bit values are packed into each byte. Activations are dynamically quantized to signed INT8, and the matrix-vector result is rescaled using the weight-row and activation scales.
 
@@ -103,9 +106,9 @@ Do not present a speedup figure as validated unless the baseline and candidate p
 
 A result is not fully substantiated by a formula, a passing smoke test, or a timing number alone. Correctness, data integrity, numerical accuracy, reproducibility, and provenance must be evaluated together:
 
-\[
+$$
 A = C \land I \land N \land R \land P
-\]
+$$
 
 where (C) is correctness, (I) is integrity, (N) is numerical accuracy, (R) is reproducibility, and (P) is provenance. This is a proposed acceptance rule for research evidence, not a claim that every gate has already passed.
 

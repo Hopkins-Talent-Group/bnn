@@ -21,7 +21,7 @@ std::string read_file(const std::string& path) {
 }
 
 std::string required_string(const std::string& json, const std::string& key) {
-    const std::regex field("\\"" + key + "\\"\\s*:\\s*\\"([^\\"\\\\]*(?:\\\\.[^\\"\\\\]*)*)\\"");
+    const std::regex field("\\\"" + key + "\\\"[[:space:]]*:");
     std::smatch match;
     if (!std::regex_search(json, match, field)) {
         throw std::runtime_error("missing or invalid string field: " + key);

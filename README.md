@@ -6,7 +6,7 @@
 
 ## Research paper
 
-**A Repository-Wide Mathematical and Engineering Audit of Vitrix Lab: Quantization Kernels, nanoLM Architecture, Binary-Skill Runtime, and Verification Evidence**
+**A Repository-Wide Mathematical and Engineering Audit of VitrixLab: Quantization Kernels, nanoLM Architecture, Binary-Skill Runtime, and Verification Evidence**
 
 [Read the research-paper draft on Academia.edu](https://www.academia.edu/179755366/DRAFT_A_Repository_Wide_Mathematical_and_Engineering_Audit_of_Vitrix_Lab_Quantization_Kernels_nanoLM_Architecture_Binary_Skill_Runtime_and_Verification_Evidence)
 

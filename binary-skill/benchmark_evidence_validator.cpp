@@ -21,7 +21,7 @@ std::string read_file(const std::string& path) {
 }
 
 std::string required_string(const std::string& json, const std::string& key) {
-    const std::regex field("\\\"" + key + "\\\"[[:space:]]*:");
+    const std::regex field(std::string("\"") + key + "\"[[:space:]]*:[[:space:]]*\"([^\"]*)\"");
     std::smatch match;
     if (!std::regex_search(json, match, field)) {
         throw std::runtime_error("missing or invalid string field: " + key);
@@ -31,7 +31,7 @@ std::string required_string(const std::string& json, const std::string& key) {
 
 uint64_t required_uint(const std::string& json, const std::string& key,
                        bool allow_zero = false) {
-    const std::regex field("\\"" + key + "\\"\\s*:\\s*([0-9]+)");
+    const std::regex field(std::string("\"") + key + "\"[[:space:]]*:[[:space:]]*([0-9]+)");
     std::smatch match;
     if (!std::regex_search(json, match, field)) {
         throw std::runtime_error("missing or invalid integer field: " + key);
@@ -46,7 +46,7 @@ uint64_t required_uint(const std::string& json, const std::string& key,
 }
 
 bool has_key(const std::string& object, const std::string& key) {
-    const std::regex field("\\"" + key + "\\"\\s*:");
+    const std::regex field(std::string("\"") + key + "\"[[:space:]]*:");
     return std::regex_search(object, field);
 }
 

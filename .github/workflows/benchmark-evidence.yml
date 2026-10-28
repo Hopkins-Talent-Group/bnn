@@ -16,44 +16,9 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-      - name: Validate benchmark report and dataset integrity
-        shell: bash
-        run: |
-          set -euo pipefail
-          report=binary-skill/benchmark_results.json
-          binary=binary-skill/secondbrain.bin
-
-          jq -e '
-            .schema_version == 1 and
-            (.provenance | type == "object") and
-            (.provenance.os | type == "string" and length > 0) and
-            (.provenance.compiler | type == "string" and length > 0) and
-            (.provenance.build_type | type == "string" and length > 0) and
-            (.provenance.iterations_per_op | type == "number" and . > 0) and
-            (.skill_count | type == "number" and . > 0) and
-            (.file_size_bytes | type == "number" and . >= 0) and
-            (.file_sha256 | test("^[0-9a-f]{64}$")) and
-            (.results | type == "array" and length > 0) and
-            ([.results[].operation] | all(type == "string" and length > 0)) and
-            ([.results[].samples] | all(type == "number" and . > 0)) and
-            ([.results[] | (.min_ns <= .median_ns and .median_ns <= .p95_ns and .p95_ns <= .max_ns)] | all)
-          ' "$report" >/dev/null
-
-          expected_size=$(jq -r '.file_size_bytes' "$report")
-          actual_size=$(wc -c < "$binary" | tr -d ' ')
-          test "$expected_size" = "$actual_size"
-
-          expected_hash=$(jq -r '.file_sha256' "$report")
-          actual_hash=$(sha256sum "$binary" | cut -d ' ' -f 1)
-          test "$expected_hash" = "$actual_hash"
-
-          build_type=$(jq -r '.provenance.build_type' "$report")
-          commit=$(jq -r '.provenance.commit // ""' "$report")
-          source_dirty=$(jq -r '.provenance.source_dirty // "unknown"' "$report")
-          bench_context=$(jq -r '.provenance.bench_context // "unknown"' "$report")
-          if [[ "$build_type" == "Release" && "$commit" =~ ^[0-9a-f]{40}$ && "$source_dirty" == "false" && "$bench_context" == "controlled-release" ]]; then
-            echo "Controlled-release provenance contract PASS"
-          else
-            echo "NOTICE: report validated as historical evidence; not certified as controlled-release provenance."
-          fi
-          echo "PASS: benchmark report structure and dataset integrity"
+      - name: Configure strict C++17 build
+        run: cmake -S binary-skill -B build -DCMAKE_BUILD_TYPE=Release
+      - name: Build C++ evidence validator
+        run: cmake --build build --target benchmark_evidence_validator --parallel 2
+      - name: Validate benchmark report and binary integrity
+        run: build/benchmark_evidence_validator binary-skill/benchmark_results.json binary-skill/secondbrain.bin

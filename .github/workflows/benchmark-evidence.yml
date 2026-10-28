@@ -1,0 +1,20 @@
+name: Benchmark Evidence Contract
+
+on:
+  pull_request:
+    branches: ["**"]
+  push:
+    branches: ["**"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate-benchmark-evidence:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Validate benchmark metadata, timing invariants, and dataset digest
+        run: python3 binary-skill/tools/validate_benchmark_contract.py

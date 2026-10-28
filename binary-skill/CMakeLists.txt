@@ -16,3 +16,6 @@ target_include_directories(binary_skill_cli PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 
 add_executable(benchmark_runner benchmark.cpp binary_skill.hpp)
 target_include_directories(benchmark_runner PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+
+add_executable(benchmark_evidence_validator benchmark_evidence_validator.cpp binary_skill.hpp)
+target_include_directories(benchmark_evidence_validator PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})

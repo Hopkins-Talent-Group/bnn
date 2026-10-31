@@ -31,5 +31,9 @@ raw_skills/
 *.json
 !compile_commands.json
 
-# Explicitly track pure binary and C++ sources
+# Explicitly track pure binary, C++ sources, and benchmark output
 !binary-skill/secondbrain.bin
+!binary-skill/benchmark_results.json
+
+# Test roundtrip and adversarial artifacts
+test_*.bin

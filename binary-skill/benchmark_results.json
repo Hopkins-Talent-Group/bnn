@@ -1,0 +1,107 @@
+{
+  "schema_version": 1,
+  "provenance": {
+    "commit": "b251258",
+    "os": "Windows x64",
+    "compiler": "MSVC 1944",
+    "build_type": "Release",
+    "iterations_per_op": 50
+  },
+  "binary_file": "secondbrain.bin",
+  "file_size_bytes": 510896,
+  "skill_count": 52,
+  "file_sha256": "c7bab283e185e762c690f11307b6fc75752d4b5234fa66896b0919d674a404b5",
+  "is_memory_mapped": true,
+  "results": [
+    {
+      "operation": "open_mmap",
+      "samples": 50,
+      "min_ns": 45900,
+      "median_ns": 46800,
+      "p95_ns": 56200,
+      "max_ns": 60100,
+      "median_us": 46.8,
+      "matches": 52
+    },
+    {
+      "operation": "single_record_access_O1",
+      "samples": 50,
+      "min_ns": 0,
+      "median_ns": 0,
+      "p95_ns": 100,
+      "max_ns": 100,
+      "median_us": 0,
+      "matches": 2
+    },
+    {
+      "operation": "indexed_record_access_all_52",
+      "samples": 50,
+      "min_ns": 200,
+      "median_ns": 300,
+      "p95_ns": 600,
+      "max_ns": 900,
+      "median_us": 0.3,
+      "matches": 975
+    },
+    {
+      "operation": "exact_name_lookup",
+      "samples": 50,
+      "min_ns": 100,
+      "median_ns": 200,
+      "p95_ns": 300,
+      "max_ns": 700,
+      "median_us": 0.2,
+      "matches": 1
+    },
+    {
+      "operation": "category_lookup_nvidia",
+      "samples": 50,
+      "min_ns": 400,
+      "median_ns": 500,
+      "p95_ns": 600,
+      "max_ns": 1300,
+      "median_us": 0.5,
+      "matches": 5
+    },
+    {
+      "operation": "search_common_nvidia",
+      "samples": 50,
+      "min_ns": 1630700,
+      "median_ns": 1752600,
+      "p95_ns": 2425100,
+      "max_ns": 2854300,
+      "median_us": 1752.6,
+      "matches": 5
+    },
+    {
+      "operation": "search_rare_whisper",
+      "samples": 50,
+      "min_ns": 1489200,
+      "median_ns": 1719400,
+      "p95_ns": 3592500,
+      "max_ns": 9486200,
+      "median_us": 1719.4,
+      "matches": 2
+    },
+    {
+      "operation": "search_nomatch",
+      "samples": 50,
+      "min_ns": 1452800,
+      "median_ns": 1486700,
+      "p95_ns": 1924400,
+      "max_ns": 2009900,
+      "median_us": 1486.7,
+      "matches": 0
+    },
+    {
+      "operation": "sha256_whole_file",
+      "samples": 20,
+      "min_ns": 2094900,
+      "median_ns": 2231200,
+      "p95_ns": 2936800,
+      "max_ns": 2936800,
+      "median_us": 2231.2,
+      "matches": 64
+    }
+  ]
+}

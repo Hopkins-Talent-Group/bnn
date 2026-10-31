@@ -18,13 +18,11 @@ Without executing, we use the source at the reported commit for PR #15.  The exp
 
 Quantization maps continuous weights to a discrete set.  A symmetric linear quantizer uses: 
 
-$
-\[
+$$
 q = \mathrm{round}\bigl(\alpha \cdot w\bigr), \quad \alpha = \frac{2^{n-1}-1}{\max(|w|)}.
-\]
-$
+$$
 
-For 4 bits (signed), $2^{3}-1=7$, so we scale by 7.  Then $q$ is clamped to $[-7,+7]$.  Similarly for 8 bits, scale by 127 and clamp to $[-127,+127]$.  After rounding, this produces near-optimal approximations.  Such uniform quantization is widely used (e.g. TensorFlow Lite, Qualcomm AI SDK).  For signed quantization, any fractional value of $0.5$ must be handled with a tie-breaking rule.  By convention, C/C++ `std::round()` rounds ties **away from zero**. This avoids even/odd bias and is recommended for inference.  For example, in Google’s quantization scheme it is noted that hardware instructions like ARM’s RSHL will by default “break ties by rounding upward” (toward +∞), which incorrectly rounds –1.5 to –1 instead of –2, introducing a positive bias. Instead, one must implement a true round-to-nearest (ties away from zero).  
+For 4 bits (signed), $$2^{3}-1=7$$, so we scale by 7.  Then $$q$$ is clamped to $$[-7,+7]$$.  Similarly for 8 bits, scale by 127 and clamp to $$[-127,+127]$$.  After rounding, this produces near-optimal approximations.  Such uniform quantization is widely used (e.g. TensorFlow Lite, Qualcomm AI SDK).  For signed quantization, any fractional value of $0.5$ must be handled with a tie-breaking rule.  By convention, C/C++ `std::round()` rounds ties **away from zero**. This avoids even/odd bias and is recommended for inference.  For example, in Google’s quantization scheme it is noted that hardware instructions like ARM’s RSHL will by default “break ties by rounding upward” (toward +∞), which incorrectly rounds –1.5 to –1 instead of –2, introducing a positive bias. Instead, one must implement a true round-to-nearest (ties away from zero).  
 
 > **Example (per [41])**: using RSHL for –12/8 gives –1, but correct round-to-nearest (away from zero) is –2. The upward bias from an incorrect tie rule was found to degrade neural net accuracy. Thus +3.5→+4 and –3.5→–4 must hold.  
 

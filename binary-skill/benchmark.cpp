@@ -186,7 +186,9 @@ int main(int argc, char* argv[]) {
     }));
 
     // 9. Whole-file SHA-256 calculation
-    results.push_back(run_benchmark("sha256_whole_file", 20, [&]() -> size_t {
+    // Uses ITERS (50) for consistency so p95 is computed from the same sample
+    // count as every other operation (P2-A: was 20, p95=max at n=20).
+    results.push_back(run_benchmark("sha256_whole_file", ITERS, [&]() -> size_t {
         std::string h = reader.compute_file_sha256_hex();
         if (h.size() != 64) {
             throw std::runtime_error("Benchmark failure: sha256_whole_file produced invalid hash length");

@@ -818,6 +818,21 @@ struct Tokenizer {
 
 // ─────────────────────────────────────────────────────────────────────────────
 // 17.  Model save / load  (simple binary format)
+//
+// File layout (P3-C: ABI documented here — all fields native byte order, which
+// is little-endian on x86/x86-64):
+//
+//   [0] Config struct          (sizeof(Config) bytes, compiler-native packing)
+//   [sizeof(Config)] float[]   wte  (vocab_size × n_embd floats)
+//   ...                        wpe  (block_size × n_embd floats)
+//   per block:                 wq, wk, wv, wo  (n_embd × n_embd each)
+//                              fc1 (n_embd × 4*n_embd), fc2 (4*n_embd × n_embd)
+//
+// Portability limitations:
+//   - No magic number or version field — incompatible files give UB on load.
+//   - Struct packing is compiler-defined; may differ between MSVC and GCC/Clang.
+//   - Byte order is native (little-endian); files are not portable to big-endian.
+//   A future version should add a 8-byte header: magic("BNNM") + version(uint32).
 // ─────────────────────────────────────────────────────────────────────────────
 static void save_weights(const ModelWeights& W, const std::string& path) {
     std::ofstream f(path, std::ios::binary);

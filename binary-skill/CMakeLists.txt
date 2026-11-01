@@ -17,6 +17,18 @@ target_include_directories(binary_skill_cli PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 add_executable(benchmark_runner benchmark.cpp binary_skill.hpp)
 target_include_directories(benchmark_runner PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 
+# Inject git commit hash so benchmark JSON output records the exact source revision.
+execute_process(
+    COMMAND git rev-parse --short HEAD
+    OUTPUT_VARIABLE GIT_COMMIT
+    OUTPUT_STRIP_TRAILING_WHITESPACE
+    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+    ERROR_QUIET
+)
+if(GIT_COMMIT)
+    target_compile_definitions(benchmark_runner PRIVATE BNN_SOURCE_COMMIT="${GIT_COMMIT}")
+endif()
+
 add_executable(benchmark_evidence_validator benchmark_evidence_validator.cpp binary_skill.hpp)
 target_include_directories(benchmark_evidence_validator PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 

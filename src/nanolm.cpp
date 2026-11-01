@@ -743,8 +743,8 @@ struct Adam {
                                  "call update_all() or increment step first\n", step);
             return;
         }
-        float b1t = std::pow(b1, step);
-        float b2t = std::pow(b2, step);
+        float b1t = std::pow(b1, static_cast<float>(step));
+        float b2t = std::pow(b2, static_cast<float>(step));
         float alpha = lr * std::sqrt(1.0f - b2t) / (1.0f - b1t);
         for (int i = 0; i < n; i++) {
             m[i] = b1 * m[i] + (1.0f - b1) * g[i];

@@ -39,7 +39,13 @@ StatResult run_benchmark(const std::string& op_name, size_t iterations, Func&& f
     res.samples = iterations;
     res.min_ns = times.front();
     res.max_ns = times.back();
-    res.median_ns = times[iterations / 2];
+    // Correct median: average of two middle elements for even sample counts.
+    if (iterations % 2 == 0 && iterations >= 2) {
+        res.median_ns = (times[iterations / 2 - 1] + times[iterations / 2]) / 2;
+    } else {
+        res.median_ns = times[iterations / 2];
+    }
+    // p95: use floor index; requires >= 20 samples for a meaningful 95th percentile.
     res.p95_ns = times[static_cast<size_t>(iterations * 0.95)];
     res.matches = matches;
     return res;
@@ -219,7 +225,13 @@ int main(int argc, char* argv[]) {
         json_out << "{\n"
                  << "  \"schema_version\": 1,\n"
                  << "  \"provenance\": {\n"
-                 << "    \"commit\": \"b251258\",\n"
+                 << "    \"commit\": \""
+#ifdef BNN_SOURCE_COMMIT
+                 << BNN_SOURCE_COMMIT
+#else
+                 << "unknown"
+#endif
+                 << "\",\n"
 #ifdef _WIN32
                  << "    \"os\": \"Windows x64\",\n"
 #elif defined(__APPLE__)

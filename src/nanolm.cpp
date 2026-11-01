@@ -735,6 +735,14 @@ struct Adam {
     int   step = 0;
 
     void update(float* w, float* g, float* m, float* v, int n) {
+        // step must be > 0; bias-correction denominators (1-b1^step, 1-b2^step) are
+        // zero at step=0 and would produce NaN/inf.  Always call update_all() which
+        // increments step before dispatching here, or call ++step yourself first.
+        if (step <= 0) {
+            std::fprintf(stderr, "Adam::update(): step must be > 0 (got %d); "
+                                 "call update_all() or increment step first\n", step);
+            return;
+        }
         float b1t = std::pow(b1, step);
         float b2t = std::pow(b2, step);
         float alpha = lr * std::sqrt(1.0f - b2t) / (1.0f - b1t);
@@ -831,12 +839,37 @@ static bool load_weights(ModelWeights& W, const std::string& path) {
     std::ifstream f(path, std::ios::binary);
     if (!f) return false;
     Config cfg; f.read((char*)&cfg, sizeof(Config));
+    // Validate configuration before use - guard against malformed files
+    if (cfg.vocab_size <= 0 || cfg.block_size <= 0 || cfg.n_embd <= 0 || cfg.n_head <= 0) {
+        std::fprintf(stderr, "load_weights: invalid configuration (vocab_size=%d, block_size=%d, n_embd=%d, n_head=%d)\n",
+                     cfg.vocab_size, cfg.block_size, cfg.n_embd, cfg.n_head);
+        return false;
+    }
+    if (cfg.n_embd % cfg.n_head != 0) {
+        std::fprintf(stderr, "load_weights: n_embd (%d) must be divisible by n_head (%d)\n",
+                     cfg.n_embd, cfg.n_head);
+        return false;
+    }
     W.init(cfg);
-    auto rd = [&](std::vector<float>& v){ f.read((char*)v.data(), v.size()*sizeof(float)); };
-    rd(W.wte); rd(W.wpe);
-    for (auto& b : W.blocks) {
-        rd(b.attn.wq); rd(b.attn.wk); rd(b.attn.wv); rd(b.attn.wo);
-        rd(b.mlp.fc1); rd(b.mlp.fc2);
+    // P2-C fix: check stream health after every weight read so a truncated file is
+    // detected instead of silently delivering zero-initialised (default) weights.
+    auto rd = [&](std::vector<float>& v, const char* name) {
+        f.read((char*)v.data(), (std::streamsize)(v.size() * sizeof(float)));
+        if (!f.good()) {
+            std::fprintf(stderr, "load_weights: failed to read weight tensor '%s' from %s "
+                                 "(file truncated or I/O error)\n", name, path.c_str());
+        }
+    };
+    rd(W.wte, "wte"); rd(W.wpe, "wpe");
+    for (std::size_t bi = 0; bi < W.blocks.size(); ++bi) {
+        auto& b = W.blocks[bi];
+        rd(b.attn.wq, "wq"); rd(b.attn.wk, "wk"); rd(b.attn.wv, "wv"); rd(b.attn.wo, "wo");
+        rd(b.mlp.fc1, "fc1"); rd(b.mlp.fc2, "fc2");
+    }
+    if (!f.good()) {
+        std::fprintf(stderr, "load_weights: stream not good after reading weights from %s\n",
+                     path.c_str());
+        return false;
     }
     std::printf("[load] loaded %s\n", path.c_str());
     return true;
@@ -855,12 +888,17 @@ static std::string generate(
 {
     int T = cfg.block_size, V = cfg.vocab_size;
 
-    // Seed context with prompt (right-pad or truncate to T)
+    // Seed context with prompt (right-aligned; truncate keeping suffix if longer than T).
+    // This ensures ctx[T-1] always contains the last relevant token (last prompt token
+    // when no new tokens have been generated, or the most recently generated token thereafter),
+    // which is the position we sample from below.
     std::vector<int> ctx(T, 0);
     std::vector<int> enc = tok.encode(prompt);
-    int start = std::max(0, (int)enc.size() - T);
-    for (int i = start; i < (int)enc.size() && i - start < T; i++)
-        ctx[i - start] = enc[i];
+    int enc_size = static_cast<int>(enc.size());
+    int copy_count = std::min(enc_size, T);
+    for (int i = 0; i < copy_count; i++) {
+        ctx[T - copy_count + i] = enc[enc_size - copy_count + i];
+    }
 
     std::string out = prompt;
     ForwardCache cache;
@@ -869,8 +907,11 @@ static std::string generate(
         forward(cfg, W, ctx, cache, false);
 
         // Last token's logits → sample
-        int last = std::min((int)enc.size() + step, T-1);
-        if ((int)enc.size() + step >= T) last = T-1;
+        // With right-aligned prompting, ctx[T-1] always contains the last relevant token:
+        //   - At step 0: the last prompt token (correct starting point for generation)
+        //   - At step s (s > 0): the most recently generated token (correct for continuation)
+        // We therefore always sample from position T-1.
+        int last = T - 1;
 
         std::vector<float> logits(V);
         std::copy(&cache.logits[last*V], &cache.logits[last*V+V], logits.begin());
@@ -933,6 +974,16 @@ static void train(
     ForwardCache cache;
     std::mt19937 data_rng(0);
     int T = cfg.block_size;
+
+    // Guard: corpus must be long enough to produce at least one training sample.
+    // Each sample needs T+1 tokens (T context + 1 target), so data.size() >= T+2
+    // ensures the uniform_int_distribution upper bound is non-negative.
+    if ((int)data.size() < T + 2) {
+        std::fprintf(stderr, "train: corpus too short (%zu tokens after tokenisation); "
+                             "need at least %d tokens for block_size=%d\n",
+                     data.size(), T + 2, T);
+        return;
+    }
 
     for (int iter = 0; iter < max_iters; iter++) {
         // Random batch of 1 sequence

@@ -213,4 +213,87 @@ inline void matvec_binary(const BinaryMatrix& weights, const float* x, float* y)
     }
 }
 
+struct Int8Matrix {
+    int rows = 0;
+    int cols = 0;
+    // Per-element 8-bit signed integers, row-major (rows × cols entries).
+    // Dequantize element [r,c] as: (float)packed[r*cols+c] * row_scales[r]
+    std::vector<std::int8_t> packed;
+    // Per-row scale factor: row_scales[r] = max_abs_in_row / 127.0f
+    std::vector<float> row_scales;
+};
+
+inline Int8Matrix quantize_int8(const float* weights, int rows, int cols) {
+    detail::validate_quantize_input(weights, rows, cols, "INT8");
+    const std::size_t count = detail::checked_element_count(rows, cols, "INT8");
+    Int8Matrix q;
+    q.rows = rows;
+    q.cols = cols;
+    q.packed.assign(count, 0);
+    q.row_scales.assign(static_cast<std::size_t>(rows), 0.0f);
+
+    for (int r = 0; r < rows; ++r) {
+        float max_abs = 0.0f;
+        for (int c = 0; c < cols; ++c) {
+            const float v = weights[detail::element_index(r, c, cols)];
+            if (!std::isfinite(v))
+                throw std::invalid_argument("INT8: weights must be finite");
+            max_abs = std::max(max_abs, std::fabs(v));
+        }
+        const float scale = max_abs == 0.0f ? 0.0f : max_abs / 127.0f;
+        q.row_scales[static_cast<std::size_t>(r)] = scale;
+        for (int c = 0; c < cols; ++c) {
+            const std::size_t i = detail::element_index(r, c, cols);
+            int value = 0;
+            if (scale != 0.0f) {
+                value = static_cast<int>(std::round(weights[i] / scale));
+                value = std::max(-127, std::min(127, value));
+            }
+            q.packed[static_cast<std::size_t>(i)] = static_cast<std::int8_t>(value);
+        }
+    }
+    return q;
+}
+
+inline int unpack_int8(const Int8Matrix& q, std::size_t index) {
+    const std::size_t count = detail::checked_element_count(q.rows, q.cols, "INT8");
+    if (index >= count)
+        throw std::out_of_range("INT8: element index out of range");
+    return static_cast<int>(q.packed.at(index));
+}
+
+inline void matvec_int8(const Int8Matrix& weights, const float* x, float* y) {
+    if (!x || !y)
+        throw std::invalid_argument("INT8: vectors must not be null");
+    (void)detail::checked_element_count(weights.rows, weights.cols, "INT8");
+    if (weights.packed.size() != static_cast<std::size_t>(weights.rows) * static_cast<std::size_t>(weights.cols))
+        throw std::invalid_argument("INT8: invalid packed data");
+    if (weights.row_scales.size() != static_cast<std::size_t>(weights.rows))
+        throw std::invalid_argument("INT8: invalid matrix or vector");
+
+    const std::size_t cols = static_cast<std::size_t>(weights.cols);
+    float x_max_abs = 0.0f;
+    for (std::size_t c = 0; c < cols; ++c) {
+        if (!std::isfinite(x[c]))
+            throw std::invalid_argument("INT8: activations must be finite");
+        x_max_abs = std::max(x_max_abs, std::fabs(x[c]));
+    }
+    const float x_scale = x_max_abs == 0.0f ? 0.0f : x_max_abs / 127.0f;
+    std::vector<std::int8_t> xq(cols, 0);
+    if (x_scale != 0.0f) {
+        for (std::size_t c = 0; c < cols; ++c) {
+            const int v = static_cast<int>(std::round(x[c] / x_scale));
+            xq[static_cast<std::size_t>(c)] = static_cast<std::int8_t>(std::max(-127, std::min(127, v)));
+        }
+    }
+    for (int r = 0; r < weights.rows; ++r) {
+        std::int64_t acc = 0;
+        for (std::size_t c = 0; c < cols; ++c) {
+            const int w = unpack_int8(weights, detail::element_index(static_cast<int>(r), static_cast<int>(c), static_cast<int>(cols)));
+            acc += static_cast<std::int64_t>(w) * static_cast<std::int64_t>(xq[c]);
+        }
+        y[r] = weights.row_scales[static_cast<std::size_t>(r)] * x_scale * static_cast<float>(acc);
+    }
+}
+
 } // namespace weight_loss

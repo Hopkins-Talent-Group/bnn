@@ -43,9 +43,9 @@ static void test_int8_activation_fixture() {
     const auto q8 = weight_loss::quantize_int8(w, 1, 2);
     assert(q8.packed.size() == 2);
     assert(q8.row_scales.size() == 1);
-    // max_abs=1, scale=1/127, quantized: 0->0, 1->1
+    // max_abs=1, scale=1/127, quantized: 0->0, 1->127
     assert(weight_loss::unpack_int8(q8, 0) == 0);
-    assert(weight_loss::unpack_int8(q8, 1) == 1);
+    assert(weight_loss::unpack_int8(q8, 1) == 127);
 
     // Test input {1, +0.5} -> expect y > 0.5
     float y_pos[1] = {};
@@ -60,6 +60,92 @@ static void test_int8_activation_fixture() {
     weight_loss::matvec_int8(q8, x_neg, y_neg);
     assert(std::isfinite(y_neg[0]));
     assert(y_neg[0] < -0.5f);
+}
+
+// INT4 positive half-step boundary using exactly representable values.
+// max_abs=14.0f, scale=14.0f/7.0f=2.0f (exact in float32).
+// weight=7.0f → 7.0f/2.0f=3.5f (exact in float32) → std::round(3.5f)=4.
+static void test_int4_positive_half_step() {
+    const float w[] = {14.0f, 7.0f, 0.0f};
+    const auto q4 = weight_loss::quantize_int4(w, 1, 3);
+    assert(q4.row_scales.size() == 1);
+    assert(q4.packed.size() == 2);
+    assert(weight_loss::unpack_int4(q4, 0) == 7);
+    assert(weight_loss::unpack_int4(q4, 1) == 4);
+    assert(weight_loss::unpack_int4(q4, 2) == 0);
+}
+
+// INT4 negative half-step boundary using exactly representable values.
+// max_abs=14.0f, scale=14.0f/7.0f=2.0f (exact in float32).
+// weight=-7.0f → -7.0f/2.0f=-3.5f (exact in float32) → std::round(-3.5f)=-4.
+static void test_int4_negative_half_step() {
+    const float w[] = {-14.0f, -7.0f, 0.0f};
+    const auto q4 = weight_loss::quantize_int4(w, 1, 3);
+    assert(q4.row_scales.size() == 1);
+    assert(q4.packed.size() == 2);
+    assert(weight_loss::unpack_int4(q4, 0) == -7);
+    assert(weight_loss::unpack_int4(q4, 1) == -4);
+    assert(weight_loss::unpack_int4(q4, 2) == 0);
+}
+
+// INT4 max_abs weight maps to saturation boundary ±7.
+// NOTE: Independent clamp testing is unsupported by the current public API:
+// max_abs is derived from the same row being quantized, bounding
+// |weights[i] / scale| <= 7 + epsilon through normal quantization. The clamp
+// in quantize_int4() is defensive only; no public input has been identified
+// that triggers it through quantize_int4(). This test verifies the strongest
+// behavior the API supports: max_abs weight → ±7.
+// max_abs=14.0f, scale=14.0f/7.0f=2.0f (exact) → weight=14.0f → 14.0f/2.0f=7.0f.
+static void test_int4_saturation_boundary() {
+    const float w[] = {14.0f, -14.0f, 0.0f};
+    const auto q4 = weight_loss::quantize_int4(w, 1, 3);
+    assert(q4.row_scales.size() == 1);
+    assert(q4.packed.size() == 2);
+    assert(weight_loss::unpack_int4(q4, 0) == 7);
+    assert(weight_loss::unpack_int4(q4, 1) == -7);
+    assert(weight_loss::unpack_int4(q4, 2) == 0);
+}
+
+// INT8 positive half-step boundary using exactly representable values.
+// max_abs=254.0f, scale=254.0f/127.0f=2.0f (exact in float32).
+// weight=127.0f → 127.0f/2.0f=63.5f (exact in float32) → std::round(63.5f)=64.
+static void test_int8_positive_half_step() {
+    const float w[] = {254.0f, 127.0f};
+    const auto q8 = weight_loss::quantize_int8(w, 1, 2);
+    assert(q8.row_scales.size() == 1);
+    assert(q8.packed.size() == 2);
+    assert(weight_loss::unpack_int8(q8, 0) == 127);
+    assert(weight_loss::unpack_int8(q8, 1) == 64);
+}
+
+// INT8 negative half-step boundary using exactly representable values.
+// max_abs=254.0f, scale=254.0f/127.0f=2.0f (exact in float32).
+// weight=-127.0f → -127.0f/2.0f=-63.5f (exact in float32) → std::round(-63.5f)=-64.
+static void test_int8_negative_half_step() {
+    const float w[] = {-254.0f, -127.0f};
+    const auto q8 = weight_loss::quantize_int8(w, 1, 2);
+    assert(q8.row_scales.size() == 1);
+    assert(q8.packed.size() == 2);
+    assert(weight_loss::unpack_int8(q8, 0) == -127);
+    assert(weight_loss::unpack_int8(q8, 1) == -64);
+}
+
+// INT8 max_abs weight maps to saturation boundary ±127.
+// Independent clamp testing is unsupported by the current public API for the
+// same reason: max_abs is derived from the same row being quantized, bounding
+// |weights[i] / scale| <= 127 + epsilon through normal quantization. The clamp
+// in quantize_int8() is defensive only; no public input has been identified
+// that triggers it through quantize_int8(). This test verifies the strongest
+// behavior the API supports: max_abs weight → ±127.
+// max_abs=254.0f, scale=254.0f/127.0f=2.0f (exact) → weight=254.0f → 254.0f/2.0f=127.0f.
+static void test_int8_saturation_boundary() {
+    const float w[] = {254.0f, -254.0f, 0.0f};
+    const auto q8 = weight_loss::quantize_int8(w, 1, 3);
+    assert(q8.row_scales.size() == 1);
+    assert(q8.packed.size() == 3);
+    assert(weight_loss::unpack_int8(q8, 0) == 127);
+    assert(weight_loss::unpack_int8(q8, 1) == -127);
+    assert(weight_loss::unpack_int8(q8, 2) == 0);
 }
 
 int main() {
@@ -89,6 +175,14 @@ int main() {
 
     // INT8 activation fixture tests
     test_int8_activation_fixture();
+
+    // New boundary-case tests: INT4/INT8 half-step rounding and saturation
+    test_int4_positive_half_step();
+    test_int4_negative_half_step();
+    test_int4_saturation_boundary();
+    test_int8_positive_half_step();
+    test_int8_negative_half_step();
+    test_int8_saturation_boundary();
 
     const float zeros[] = {0.0f, 0.0f, 0.0f};
     const auto qzero = weight_loss::quantize_int4(zeros, 1, 3);

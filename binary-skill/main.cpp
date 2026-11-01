@@ -12,7 +12,7 @@ void print_usage(const char* prog) {
               << "  info             Display binary header and memory-mapping metadata\n"
               << "  list             List all distilled skills in tabular layout\n"
               << "  category <name>  List skills by category (e.g. NVIDIA_STACK)\n"
-              << "  search <query>   Perform keyword lookup (sub-millisecond linear scan)\n"
+              << "  search <query>   Perform keyword lookup (O(N) linear scan; typically 1-3 ms)\n"
               << "  show <name>      Inspect skill definition, canonical SHA-256, and body\n"
               << "  verify           Cryptographic and structural layout verification\n"
               << "  test-compile     Run pure C++ compiler self-test roundtrip\n";
@@ -247,7 +247,7 @@ int main(int argc, char* argv[]) {
                   << "Access Mode        : " << (reader.is_memory_mapped() ? "Native OS Memory-Mapped (Zero-Heap)" : "Buffered Memory Load") << "\n"
                   << "Record Seek (Index): O(1) Constant-Time\n"
                   << "Name / Text Search : O(N) Linear Scan\n"
-                  << "Status             : VERIFIED & ACTIVE\n"
+                  << "Status             : " << (reader.verify_all() ? "VERIFIED & ACTIVE" : "INTEGRITY CHECK FAILED") << "\n"
                   << "========================================================\n";
         return 0;
     }

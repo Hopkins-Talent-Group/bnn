@@ -1,10 +1,10 @@
 # Binary-Skill (Zero-FPU Second-Brain Engine)
 
-Zero-copy memory-mappable binary representation of the 52-skill distilled knowledge base. Built entirely in modern C++17/C++20 with **zero Python dependencies** and zero floating-point model inference / tokenization overhead.
+Memory-mappable binary representation of the tracked skill knowledge base. The standalone runtime is implemented in C++17 and has no Python runtime dependency. It is a data-access experiment, not an integrated neural-network inference engine.
 
 ## Architecture
 
-Traditional agent frameworks read hundreds of bloated markdown files per session, wasting millions of FLOPs on tokenization and exhausting context windows. `binary-skill` compiles all skills into a deterministic binary format (`VSKB0001`):
+`binary-skill` compiles skill records into a binary format (`VSKB0001`). The repository does not currently provide a matched, reproducible comparison against a Markdown/file-based baseline, so this architecture description is not a measured speedup claim:
 
 - **Header (20 bytes)**: Magic identifier (`VSKB`), format version (1), skill count (52), string pool offset & size.
 - **Record Table (52 × 128 bytes)**: Fixed-width cache-aligned records containing null-terminated names, category IDs, capability bitmasks, cryptographic SHA-256 hashes, and string pool pointer offsets.
@@ -12,7 +12,7 @@ Traditional agent frameworks read hundreds of bloated markdown files per session
 
 ## Memory-Mapped Zero-FPU Querying
 
-Any model runtime, C++ service, or local AI daemon can memory-map `secondbrain.bin` and perform $O(1)$ constant-time record access and microsecond keyword lookups without invoking BPE tokenizers or GPU attention matrices.
+The reader supports memory mapping where available. After a successful open, indexed `record(index)` access is constant-time. Opening a file also validates the layout by traversing records, and keyword search scans records and their text, so those operations are not O(1). No latency or speedup guarantee is made by this description.
 
 ## Compiling and Running the C++ CLI
 
@@ -44,3 +44,8 @@ To test the pure C++ compiler roundtrip:
 - `4: DESIGN_FRONTEND` (ui-ux-pro-max, ui-styling, design-system, banner-design, ...)
 - `5: DATABASE_BACKEND` (prisma-cli, prisma-client-api, prisma-postgres, ...)
 - `6: MULTIMODAL_CREATIVE` (threejs, remotion-best-practices, whisper-beat-finder, ...)
+
+
+## Benchmark evidence status
+
+The tracked `binary-skill/benchmark_results.json` is historical evidence unless its provenance explicitly identifies the measured commit, source cleanliness, build configuration, and environment. CI benchmark runs are smoke tests for correctness and harness execution; their timings are informational, not a performance gate. The current benchmark does not measure a workload-equivalent Markdown corpus baseline, so it does not establish a comparative speedup.

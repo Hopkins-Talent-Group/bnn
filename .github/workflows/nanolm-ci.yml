@@ -1,0 +1,134 @@
+name: nanoLM CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+    branches: ["**"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: nanolm-ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build nanoLM (${{ matrix.os }} / ${{ matrix.compiler }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            compiler: gcc
+          - os: ubuntu-latest
+            compiler: clang
+          - os: windows-latest
+            compiler: msvc
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure MSVC
+        if: matrix.compiler == 'msvc'
+        uses: ilammy/msvc-dev-cmd@v1
+
+      - name: Configure CMake
+        shell: bash
+        run: |
+          if [[ "${{ matrix.compiler }}" == "clang" ]]; then
+            export CC=clang
+            export CXX=clang++
+          elif [[ "${{ matrix.compiler }}" == "gcc" ]]; then
+            export CC=gcc
+            export CXX=g++
+          fi
+          cmake -S src -B build-nanolm -DCMAKE_BUILD_TYPE=Debug \
+                -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
+
+      - name: Build with strict warnings (warnings are errors)
+        shell: bash
+        run: |
+          if [[ "${{ runner.os }}" == "Windows" ]]; then
+            cmake --build build-nanolm --config Debug --parallel
+          else
+            cmake --build build-nanolm --parallel
+          fi
+
+      - name: Upload compile_commands.json
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nanolm-compile-commands-${{ runner.os }}-${{ matrix.compiler }}
+          path: build-nanolm/compile_commands.json
+          if-no-files-found: ignore
+          retention-days: 14
+
+  sanitizers:
+    name: nanoLM ASan + UBSan (Linux)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure sanitizer build
+        run: >-
+          cmake -S src -B build-nanolm-san
+          -DCMAKE_BUILD_TYPE=Debug
+          -DCMAKE_CXX_COMPILER=clang++
+          -DCMAKE_CXX_FLAGS="-fsanitize=address,undefined -fno-omit-frame-pointer -Wall -Wextra -Wpedantic -Wconversion -Wsign-conversion"
+          -DCMAKE_EXE_LINKER_FLAGS="-fsanitize=address,undefined"
+
+      - name: Build under sanitizers
+        run: cmake --build build-nanolm-san --parallel
+
+  static-analysis:
+    name: nanoLM static analysis (Cppcheck)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Cppcheck
+        run: sudo apt-get update && sudo apt-get install --yes cppcheck
+
+      - name: Analyze src/
+        run: |
+          cppcheck --version
+          cppcheck --enable=warning,performance,portability \
+            --error-exitcode=1 \
+            --inline-suppr \
+            --suppress=missingIncludeSystem \
+            --language=c++ --std=c++17 \
+            src/nanolm.cpp
+
+
+  sandbox-tests:
+    name: NanoLM six-test sandbox (GCC / Docker network none)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build GCC/CMake test image
+        run: docker build -f test-bundle/Dockerfile -t bnn-nanolm-sandbox .
+
+      - name: Execute all six tests without network access
+        run: |
+          docker run --rm --network none \
+            -e BNN_NETWORK_ISOLATED=1 \
+            -v "$GITHUB_WORKSPACE:/workspace" \
+            -w /workspace \
+            bnn-nanolm-sandbox
+
+      - name: Upload raw compiler and test logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nanolm-sandbox-raw-logs
+          path: build-nanolm/test-logs/
+          if-no-files-found: warn
+          retention-days: 14
